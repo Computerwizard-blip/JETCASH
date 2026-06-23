@@ -1,0 +1,8 @@
+{
+  "name": "Remix: AVIATOR 1",
+  "description": "Welcome to Aviator Kenya, a secure online gaming platform dedicated to providing a safe, transparent, and enjoyable gaming experience. Our platform utilizes advanced security systems and encrypted transactions to protect user information and funds.\n\nWe are committed to operating in compliance with Kenyan laws and regulations governing online gaming and financial transactions. Where applicable, our operations adhere to requirements established by the  (BCLB) and relevant financial regulations overseen by the .\n\nPlayers can enjoy a seamless experience with secure deposits and withdrawals, fair gameplay, responsible gaming measures, and dedicated customer support. Our goal is to provide a trusted platform that prioritizes security, integrity, and user satisfaction.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
