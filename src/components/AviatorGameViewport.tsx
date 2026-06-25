@@ -4,7 +4,7 @@
  */
 
 import React, { useEffect, useRef, useState } from 'react';
-import { Sparkles, Trophy, Users, MonitorPlay } from 'lucide-react';
+import { Sparkles, Trophy, MonitorPlay } from 'lucide-react';
 
 interface AviatorGameViewportProps {
   crashActive: boolean;
@@ -86,6 +86,9 @@ export default function AviatorGameViewport({
     let localFrame: number;
     let planeX = 0;
     let planeY = 0;
+    let stormTicks = 0;
+    let lightningAlpha = 0;
+    let raindrops: { x: number; y: number; speed: number; length: number; alpha: number }[] = [];
 
     const render = () => {
       const w = dimensions.width;
@@ -94,27 +97,58 @@ export default function AviatorGameViewport({
       canvas.width = w;
       canvas.height = h;
 
-      // 1. Draw solid dark cockpit background
-      ctx.fillStyle = '#100c14'; // Dark space theme
-      ctx.fillRect(0, 0, w, h);
-
-      // 2. Draw deep radial pinkish glow in the center-right to match images
-      const radialGlow = ctx.createRadialGradient(w * 0.7, h * 0.3, 20, w * 0.7, h * 0.3, w * 0.8);
-      radialGlow.addColorStop(0, 'rgba(120, 10, 35, 0.3)'); 
-      radialGlow.addColorStop(0.5, 'rgba(30, 8, 25, 0.1)');
-      radialGlow.addColorStop(1, 'rgba(0, 0, 0, 0)');
-      ctx.fillStyle = radialGlow;
-      ctx.fillRect(0, 0, w, h);
-
-      // 3. Draw moving background grid lines for velocity feel
-      ctx.strokeStyle = '#231433'; // Soft violet grid lines
-      ctx.lineWidth = 1;
-      
       // Update grid offsets only if flight is occurring
       const active = crashActiveRef.current;
       const multiplier = crashMultiplierRef.current;
       const isFlewAway = crashStatusMessageRef.current && crashStatusMessageRef.current.includes("FLEW AWAY");
 
+      const currentMult = active ? multiplier : (lastFlightStateRef.current ? lastFlightStateRef.current.multiplier : multiplier);
+      const isStormy = currentMult >= 50 && (active || isFlewAway);
+
+      if (isStormy) {
+        stormTicks++;
+        if (stormTicks === 1 || (stormTicks > 35 && Math.random() < 0.02)) {
+          lightningAlpha = 1.0;
+        }
+
+        // Draw stormy cloud background
+        const skyGrad = ctx.createLinearGradient(0, 0, 0, h);
+        skyGrad.addColorStop(0, '#0f172a'); // Deep stormy slate horizon top
+        skyGrad.addColorStop(0.4, '#1e293b'); // Stormy slate grey clouds
+        skyGrad.addColorStop(0.8, '#334155'); // Moody cloud grey
+        skyGrad.addColorStop(1, '#0f172a'); // Bottom cockpit slate
+        ctx.fillStyle = skyGrad;
+        ctx.fillRect(0, 0, w, h);
+
+        // Draw soft stormy clouds
+        ctx.fillStyle = 'rgba(148, 163, 184, 0.15)';
+        ctx.beginPath();
+        ctx.arc(w * 0.25, h * 0.2, 90, 0, Math.PI * 2);
+        ctx.arc(w * 0.6, h * 0.15, 120, 0, Math.PI * 2);
+        ctx.arc(w * 0.85, h * 0.3, 100, 0, Math.PI * 2);
+        ctx.fill();
+      } else {
+        stormTicks = 0;
+        lightningAlpha = 0;
+        raindrops = [];
+
+        // 1. Draw solid dark cockpit background
+        ctx.fillStyle = '#100c14'; // Dark space theme
+        ctx.fillRect(0, 0, w, h);
+
+        // 2. Draw deep radial pinkish glow in the center-right to match images
+        const radialGlow = ctx.createRadialGradient(w * 0.7, h * 0.3, 20, w * 0.7, h * 0.3, w * 0.8);
+        radialGlow.addColorStop(0, 'rgba(120, 10, 35, 0.3)'); 
+        radialGlow.addColorStop(0.5, 'rgba(30, 8, 25, 0.1)');
+        radialGlow.addColorStop(1, 'rgba(0, 0, 0, 0)');
+        ctx.fillStyle = radialGlow;
+        ctx.fillRect(0, 0, w, h);
+      }
+
+      // 3. Draw moving background grid lines for velocity feel
+      ctx.strokeStyle = isStormy ? 'rgba(148, 163, 184, 0.22)' : '#231433'; // Soft grid lines
+      ctx.lineWidth = 1;
+      
       if (active) {
         gridOffsetRef.current.x = (gridOffsetRef.current.x - 1.8) % 40;
         gridOffsetRef.current.y = (gridOffsetRef.current.y + 1.2) % 40;
@@ -287,6 +321,8 @@ export default function AviatorGameViewport({
         // Clean decayed particles
         particlesRef.current = particlesRef.current.filter((p) => p.alpha > 0 && p.x > 0);
 
+        const planeCutoutColor = isStormy ? '#1e293b' : '#100c14';
+
         // 6. Draw glowing solid red airplane icon or modern silhouette
         ctx.save();
         ctx.translate(planeX, planeY);
@@ -322,7 +358,7 @@ export default function AviatorGameViewport({
         ctx.fill();
 
         // Structural detail lines inside to form the negative cuts / accents (matching reference)
-        ctx.strokeStyle = '#100c14'; // Matching cockpit background for sharp cutouts
+        ctx.strokeStyle = planeCutoutColor; // Matching cockpit background for sharp cutouts
         ctx.lineWidth = 1.8;
 
         // Cockpit glass pane detail line cutouts
@@ -355,7 +391,7 @@ export default function AviatorGameViewport({
         ctx.fill();
 
         // Lower wing structural ribs
-        ctx.strokeStyle = '#100c14';
+        ctx.strokeStyle = planeCutoutColor;
         ctx.lineWidth = 1.5;
         ctx.beginPath();
         for (let offset = -5; offset <= 10; offset += 5) {
@@ -375,7 +411,7 @@ export default function AviatorGameViewport({
         ctx.fill();
 
         // Upper wing structural ribs
-        ctx.strokeStyle = '#100c14';
+        ctx.strokeStyle = planeCutoutColor;
         ctx.lineWidth = 1.5;
         ctx.beginPath();
         for (let offset = -5; offset <= 10; offset += 5) {
@@ -454,6 +490,60 @@ export default function AviatorGameViewport({
       } else {
         // Clear old exhaust vapor particles during runway downtime
         particlesRef.current = [];
+      }
+
+      if (isStormy) {
+        // Draw lightning flash & bolts
+        if (lightningAlpha > 0) {
+          ctx.save();
+          ctx.fillStyle = `rgba(255, 255, 255, ${lightningAlpha * 0.35})`;
+          ctx.fillRect(0, 0, w, h);
+
+          if (lightningAlpha > 0.2) {
+            ctx.strokeStyle = `rgba(224, 242, 254, ${lightningAlpha})`;
+            ctx.lineWidth = 3.5;
+            ctx.shadowColor = '#38bdf8';
+            ctx.shadowBlur = 20;
+            ctx.beginPath();
+            const boltX = (w * 0.35 + (stormTicks * 107) % (w * 0.45));
+            ctx.moveTo(boltX, 0);
+            ctx.lineTo(boltX - 15 + (Math.sin(stormTicks) * 30), h * 0.35);
+            ctx.lineTo(boltX + 15 + (Math.cos(stormTicks) * 40), h * 0.65);
+            ctx.lineTo(boltX - 25, h);
+            ctx.stroke();
+          }
+          ctx.restore();
+
+          lightningAlpha = Math.max(0, lightningAlpha - 0.06);
+        }
+
+        // Starts to rain after lightning (stormTicks > 18)
+        if (stormTicks > 18) {
+          for (let i = 0; i < 12; i++) {
+            raindrops.push({
+              x: Math.random() * (w + 100),
+              y: -20 + Math.random() * 20,
+              speed: 18 + Math.random() * 12,
+              length: 15 + Math.random() * 22,
+              alpha: 0.35 + Math.random() * 0.45
+            });
+          }
+
+          ctx.save();
+          ctx.lineWidth = 1.5;
+          raindrops.forEach((drop) => {
+            drop.x -= 4.5;
+            drop.y += drop.speed;
+            ctx.strokeStyle = `rgba(186, 230, 253, ${drop.alpha})`;
+            ctx.beginPath();
+            ctx.moveTo(drop.x, drop.y);
+            ctx.lineTo(drop.x - 3.5, drop.y + drop.length);
+            ctx.stroke();
+          });
+          ctx.restore();
+
+          raindrops = raindrops.filter((d) => d.y < h + 40 && d.x > -50);
+        }
       }
 
       animationFrameRef.current = requestAnimationFrame(render);
@@ -562,27 +652,6 @@ export default function AviatorGameViewport({
           </div>
         )}
 
-      </div>
-
-      {/* 4. Bottom Right Online Multiplayer Counter Overlays - MATCHES PHOTO */}
-      <div className="absolute bottom-3 right-4 z-10 flex items-center gap-1.5 select-none bg-[#0a0a0d]/80 px-2.5 py-1 rounded-full border border-[#212327]">
-        {/* Render Overlapping avatars */}
-        <div className="flex -space-x-2 shrink-0">
-          {avatarList.slice(0, 3).map((av, idx) => (
-            <div 
-              key={idx}
-              className="w-4 h-4 rounded-full border border-[#141518] bg-purple-950 flex items-center justify-center text-[7px] font-black font-mono text-amber-400 self-center uppercase"
-            >
-              {av}
-            </div>
-          ))}
-        </div>
-
-        {/* Badge Indicator count text */}
-        <span className="text-[10px] font-mono font-black text-gray-300 leading-none pb-0.5 flex items-center gap-1">
-          <Users className="w-2.5 h-2.5 text-gray-500" />
-          <span>{onlinePlayersCount}</span>
-        </span>
       </div>
     </div>
   );

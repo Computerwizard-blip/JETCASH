@@ -1572,19 +1572,16 @@ export default function App() {
             });
           }
         } catch (e) {
-          console.error("[WS Message Handling Error]:", e);
+          console.warn("[WS Message Handling Error]:", e);
         }
       };
 
       ws.onclose = () => {
-        console.warn("[WS Client] Disconnected, falling back to local simulator");
         setSocketConnected(false);
-        setTimeout(connect, 3000);
       };
 
-      ws.onerror = (e) => {
-        console.error("[WS Client] Error:", e);
-        ws.close();
+      ws.onerror = () => {
+        setSocketConnected(false);
       };
     }
 

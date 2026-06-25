@@ -129,6 +129,7 @@ export default function ProfilePanel({
 }: ProfilePanelProps) {
   const [copiedCode, setCopiedCode] = useState(false);
   const [confirmSignOut, setConfirmSignOut] = useState(false);
+  const [txFilter, setTxFilter] = useState<'all' | 'deposits' | 'withdrawals' | 'bonuses' | 'gameplay'>('all');
   const confirmTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // AI Support chatbot state hooks
@@ -389,6 +390,15 @@ export default function ProfilePanel({
       }
     }
   };
+
+  const filteredTransactions = transactions?.filter((tx) => {
+    if (txFilter === 'all') return true;
+    if (txFilter === 'deposits') return tx.type === 'deposit';
+    if (txFilter === 'withdrawals') return tx.type === 'withdrawal';
+    if (txFilter === 'bonuses') return tx.type === 'bonus_credit';
+    if (txFilter === 'gameplay') return tx.type === 'win' || tx.type === 'bet';
+    return true;
+  });
 
   return (
     <div className="fixed inset-0 bg-black/75 backdrop-blur-md flex justify-end z-[60] select-none font-sans animate-fadeIn">
@@ -652,25 +662,45 @@ export default function ProfilePanel({
 
           {/* Deposits, Withdrawals & Transaction History */}
           <div className="space-y-3">
-            <h4 className="text-[10px] text-gray-500 uppercase tracking-widest font-black text-left">
-              Transaction Ledger
-            </h4>
+            <div className="flex items-center justify-between gap-2">
+              <h4 className="text-[10px] text-gray-500 uppercase tracking-widest font-black text-left shrink-0">
+                Transaction Ledger
+              </h4>
+              <div className="flex items-center gap-1 overflow-x-auto no-scrollbar py-0.5">
+                {(['all', 'deposits', 'withdrawals', 'bonuses', 'gameplay'] as const).map((cat) => (
+                  <button
+                    key={cat}
+                    type="button"
+                    onClick={() => setTxFilter(cat)}
+                    className={`px-2 py-0.5 rounded text-[8.5px] font-black uppercase tracking-wider transition-all cursor-pointer shrink-0 ${
+                      txFilter === cat
+                        ? 'bg-[#00e600] text-black shadow-sm shadow-[#00e600]/20'
+                        : 'bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-white hover:border-zinc-700'
+                    }`}
+                  >
+                    {cat}
+                  </button>
+                ))}
+              </div>
+            </div>
             
             <div className="bg-black/30 border border-[#1d1f24] rounded-lg p-3 space-y-2">
               <div className="flex items-center justify-between border-b border-[#212327] pb-1.5 mb-2">
-                <span className="text-[10px] text-gray-400 font-bold uppercase">Recent Activities</span>
-                <span className="text-[9px] text-[#00e600] font-mono">
-                  {transactions && transactions.length > 0 ? `${transactions.length} recorded` : 'No logs'}
+                <span className="text-[10px] text-gray-400 font-bold uppercase">
+                  {txFilter === 'all' ? 'Recent Activities' : `${txFilter} History`}
+                </span>
+                <span className="text-[9px] text-[#00e600] font-mono font-bold">
+                  {filteredTransactions && filteredTransactions.length > 0 ? `${filteredTransactions.length} recorded` : 'No logs'}
                 </span>
               </div>
               
               <div className="max-h-48 overflow-y-auto space-y-2 pr-1 scrollbar-thin scrollbar-thumb-zinc-850">
-                {!transactions || transactions.length === 0 ? (
-                  <div className="py-6 text-center text-[10px] text-gray-500 uppercase tracking-wide">
-                    No transactions recorded yet.
+                {!filteredTransactions || filteredTransactions.length === 0 ? (
+                  <div className="py-6 text-center text-[10px] text-gray-500 uppercase tracking-wide font-mono">
+                    No {txFilter === 'all' ? '' : txFilter} transactions found.
                   </div>
                 ) : (
-                  transactions.slice(0, 10).map((tx) => {
+                  filteredTransactions.slice(0, 15).map((tx) => {
                     const isDeposit = tx.type === 'deposit';
                     const isWithdrawal = tx.type === 'withdrawal';
                     const isBonus = tx.type === 'bonus_credit';
