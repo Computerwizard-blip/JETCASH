@@ -69,7 +69,7 @@ export default function AviatorGameViewport({
       // Safeguard sizes
       setDimensions({
         width: Math.max(width, 320),
-        height: Math.max(height, 240)
+        height: Math.max(height, 100)
       });
     });
     observer.observe(containerRef.current);
@@ -559,7 +559,7 @@ export default function AviatorGameViewport({
   return (
     <div 
       ref={containerRef}
-      className="md:rounded-2xl rounded-xl relative shadow-inner select-none overflow-hidden h-[240px] xs:h-[270px] sm:h-[290px] md:h-full md:flex-1 w-full border border-red-500/10 flex flex-col justify-center items-center"
+      className="md:rounded-2xl rounded-xl relative shadow-inner select-none overflow-hidden h-full flex-1 w-full border border-red-500/10 flex flex-col justify-center items-center"
     >
       {/* 1. Underlying Render Canvas (Smooth 60FPS drawing grids and red flights) */}
       <canvas 

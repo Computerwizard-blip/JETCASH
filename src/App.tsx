@@ -2691,7 +2691,7 @@ export default function App() {
               />
 
               {/* MIDDLE FLIGHT VIEWPORT CONTAINER */}
-              <div className="p-2 sm:p-3 bg-[#0d0e10] flex-1 min-h-[180px] md:min-h-0 flex flex-col justify-center overflow-hidden">
+              <div className="p-2 sm:p-3 bg-[#0d0e10] flex-1 min-h-[120px] xs:min-h-[150px] md:min-h-0 flex flex-col justify-center overflow-hidden">
                 <AviatorGameViewport 
                   crashActive={crashActive}
                   crashMultiplier={crashMultiplier}
