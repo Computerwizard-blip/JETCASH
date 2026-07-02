@@ -1876,10 +1876,10 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen w-screen bg-[#0d0e10] text-gray-100 flex flex-col justify-start items-stretch p-0 relative antialiased overflow-y-auto">
+    <div className="min-h-screen md:h-screen w-screen bg-[#0d0e10] text-gray-100 flex flex-col justify-start items-stretch p-0 relative antialiased overflow-y-auto md:overflow-hidden">
       
       {/* Central Screen Frame */}
-      <div className="w-full bg-[#0d0e10] flex flex-col shadow-none shrink-0 overflow-y-auto">
+      <div className="w-full md:h-full bg-[#0d0e10] flex flex-col shadow-none shrink-0 md:shrink md:flex-1 overflow-y-auto md:overflow-hidden">
         
         {/* STICKY TOP DASHBOARD WRAPPER: Matches Mobile & Laptop Full-Page layout */}
         <div className="sticky top-0 z-40 bg-[#141518] flex flex-col shrink-0 border-b border-[#212327]/50 shadow-md">
@@ -1989,9 +1989,9 @@ export default function App() {
         </div>
 
         {currentView === 'aviator' && (
-          <div className="flex-1 flex flex-col md:flex-row min-h-fit bg-[#0d0e10]">
+          <div className="flex-1 flex flex-col md:flex-row min-h-fit md:min-h-0 bg-[#0d0e10] md:overflow-hidden">
             {/* LEFT SIDEBAR: Multiplayer lobby statistics & lounge chats */}
-            <div className="w-full md:w-[280px] lg:w-[320px] xl:w-[360px] shrink-0 border-r border-[#212327]/30 bg-[#0d0e10] flex flex-col overflow-y-auto order-2 md:order-1 h-auto md:p-3 pb-3 md:pb-3">
+            <div className="w-full md:w-[280px] lg:w-[320px] xl:w-[360px] shrink-0 border-r border-[#212327]/30 bg-[#0d0e10] flex flex-col overflow-y-auto md:overflow-hidden order-2 md:order-1 h-auto md:h-full md:p-3 pb-3 md:pb-3">
               <BetsLedger 
                 myBets={myBets.filter(bet => (bet.mode || 'demo') === (authSessionMode === 'real' ? 'real' : 'demo'))}
                 activePlayers={activePlayers}
@@ -2009,14 +2009,14 @@ export default function App() {
             </div>
 
             {/* RIGHT MAIN STATION: Multiplier Ribbon, cockpit canvas and twin-bet consoles */}
-            <div className="flex-1 flex flex-col order-1 md:order-2 h-auto bg-[#0d0e10]">
+            <div className="flex-1 flex flex-col order-1 md:order-2 h-auto md:h-full md:overflow-hidden bg-[#0d0e10]">
               {/* RECENT HISTORIC MULTIPLIERS STRIP */}
               <HistoryRibbon 
                 multipliers={historyList}
               />
 
               {/* MIDDLE FLIGHT VIEWPORT CONTAINER */}
-              <div className="p-2 sm:p-3 bg-[#0d0e10] flex-1 min-h-[250px] md:min-h-[160px] lg:min-h-[200px] xl:min-h-[250px] flex flex-col justify-center">
+              <div className="p-2 sm:p-3 bg-[#0d0e10] flex-1 min-h-[180px] md:min-h-0 flex flex-col justify-center overflow-hidden">
                 <AviatorGameViewport 
                   crashActive={crashActive}
                   crashMultiplier={crashMultiplier}
