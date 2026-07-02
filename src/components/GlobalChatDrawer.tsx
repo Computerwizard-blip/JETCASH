@@ -27,18 +27,16 @@ interface GlobalChatDrawerProps {
 }
 
 const PREDEFINED_PHRASES = [
-  'Nice win! 🎉',
-  'Better luck next time! 👍',
-  'Wow!',
-  'JetCash to the moon! 🚀',
-  'Let\'s gooo! 🙌',
-  'So close! 🤏',
-  'Oh no, crashed! 💥',
-  'Play safe guys! 🛡️',
-  'High risk, high reward! 💎',
-  'Wait for the big one! 🐉',
-  'Withdraw on time! ⏱️',
-  'Next round is 10x! 🔥'
+  'running bet inapaa fiti mkuu',
+  'next round running bet tuko rada sana',
+  'sasa ndio wakati fiti wa running bet',
+  'running bet is so sweet right now',
+  'buda ngojea coming next round tukiweka running bet',
+  'running bet yetu itaenda mbali roundi hii',
+  'tujaribu coming next round running bet sasa hivi',
+  'buda timing ya running bet ndio kila kitu',
+  'running bet ya next round tuko ndani fiti',
+  'sasa ndio time ya running bet'
 ];
 
 export default function GlobalChatDrawer({

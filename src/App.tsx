@@ -52,70 +52,90 @@ function seededRandom(seedValue: number) {
   };
 }
 
-// Compute deterministic round limit based on time-synchronized checks & login elapsed state
-function getRoundLimit(roundIndex: number) {
+// Compute deterministic round limit based on round index only to be identical on all devices
+function getRoundLimit(roundIndex: number): number {
   let h = Math.abs(Math.sin(roundIndex) * 10000);
   h = h - Math.floor(h);
 
-  // Retrieve stored first open time from sessionStorage or localStorage safely
-  let loginTime = Date.now();
-  try {
-    const stored = localStorage.getItem('casinohub_first_open_time') || sessionStorage.getItem('casinohub_login_time');
-    if (stored) {
-      loginTime = parseInt(stored, 10);
-    } else {
-      localStorage.setItem('casinohub_first_open_time', loginTime.toString());
-      sessionStorage.setItem('casinohub_login_time', loginTime.toString());
-    }
-  } catch (e) {}
-
-  // Check sessionStorage or localStorage for high gold round indices
-  let highRoundIndices: number[] = [];
-  try {
-    const stored = localStorage.getItem('casinohub_high_round_indices');
-    if (stored) {
-      highRoundIndices = JSON.parse(stored);
-    }
-  } catch (e) {}
-
-  // Decide if this roundIndex qualifies as a gold win round after 2 minutes
-  const elapsedMs = Date.now() - loginTime;
-  const isPast2Minutes = elapsedMs >= 120000; // 2 minutes = 120000ms
-
-  if (isPast2Minutes && highRoundIndices.length < 2) {
-    if (!highRoundIndices.includes(roundIndex)) {
-      highRoundIndices.push(roundIndex);
-      localStorage.setItem('casinohub_high_round_indices', JSON.stringify(highRoundIndices));
-    }
+  // 0.5% chance of a high gold round (200x to 1000x)
+  if (h > 0.995) {
+    const p = (h - 0.995) / 0.005;
+    return parseFloat((100.00 + p * 900.00).toFixed(2));
   }
 
-  const isHigh = highRoundIndices.includes(roundIndex);
-  if (isHigh) {
-    // Gold win: 200 minimum to 1000 maximum randomly selected
-    return parseFloat((200.00 + h * 800.00).toFixed(2));
+  // Highly authentic Aviator model: over 55% of rounds crash under 2.00x (1.00 - 1.99)
+  if (h < 0.11) {
+    // 11% of rounds crash immediately at 1.00x
+    return 1.00;
+  } else if (h < 0.55) {
+    // 44% of rounds crash between 1.01x and 1.99x
+    const p = (h - 0.11) / 0.44;
+    return parseFloat((1.01 + p * 0.98).toFixed(2));
+  } else if (h < 0.80) {
+    // 25% of rounds crash between 2.00x and 10.00x
+    const p = (h - 0.55) / 0.25;
+    return parseFloat((2.00 + p * 8.00).toFixed(2));
+  } else if (h < 0.95) {
+    // 15% of rounds between 10.01x and 30.00x
+    const p = (h - 0.80) / 0.15;
+    return parseFloat((10.01 + p * 19.99).toFixed(2));
   } else {
-    // Highly authentic Aviator model: over 55% of rounds crash under 2.00x (1.00 - 1.99)
-    if (h < 0.11) {
-      // 11% of rounds crash immediately at 1.00x
-      return 1.00;
-    } else if (h < 0.55) {
-      // 44% of rounds crash between 1.01x and 1.99x
-      const p = (h - 0.11) / 0.44;
-      return parseFloat((1.01 + p * 0.98).toFixed(2));
-    } else if (h < 0.80) {
-      // 25% of rounds crash between 2.00x and 10.00x
-      const p = (h - 0.55) / 0.25;
-      return parseFloat((2.00 + p * 8.00).toFixed(2));
-    } else if (h < 0.95) {
-      // 15% of rounds between 10.01x and 30.00x
-      const p = (h - 0.80) / 0.15;
-      return parseFloat((10.01 + p * 19.99).toFixed(2));
-    } else {
-      // 5% of rounds rare hits between 30.01x and 107.00x
-      const p = (h - 0.95) / 0.05;
-      return parseFloat((30.01 + p * 76.99).toFixed(2));
-    }
+    // Rare hits between 30.01x and 100.00x
+    const p = (h - 0.95) / 0.045; // 0.95 to 0.995 is 0.045
+    return parseFloat((30.01 + p * 69.99).toFixed(2));
   }
+}
+
+// Deterministic game state timeline calculations synced to the millisecond of the system clock
+function getGameStateAtTime(now: number) {
+  const dayMs = 86400000;
+  const startOfDay = now - (now % dayMs);
+  
+  const dayIndex = Math.floor(startOfDay / dayMs);
+  let roundIndex = dayIndex * 10000;
+  
+  let tempTime = startOfDay;
+  const lobbyDuration = 6000;
+  const crashedDuration = 2200;
+
+  let currentPhase: 'lobby' | 'flight' | 'crashed' = 'lobby';
+  let phaseStartTime = tempTime;
+  let baseLimit = 1.00;
+  let baseFlightDuration = 0;
+
+  while (true) {
+    baseLimit = getRoundLimit(roundIndex);
+    baseFlightDuration = baseLimit <= 1.00 ? 0 : Math.round((Math.log(baseLimit) / 0.0866) * 1000);
+    const roundDuration = lobbyDuration + baseFlightDuration + crashedDuration;
+
+    if (tempTime + roundDuration > now) {
+      const elapsedInRound = now - tempTime;
+      
+      if (elapsedInRound < lobbyDuration) {
+        currentPhase = 'lobby';
+        phaseStartTime = tempTime;
+      } else if (elapsedInRound < lobbyDuration + baseFlightDuration) {
+        currentPhase = 'flight';
+        phaseStartTime = tempTime + lobbyDuration;
+      } else {
+        currentPhase = 'crashed';
+        phaseStartTime = tempTime + lobbyDuration + baseFlightDuration;
+      }
+      break;
+    }
+
+    tempTime += roundDuration;
+    roundIndex++;
+  }
+
+  return {
+    roundIndex,
+    currentPhase,
+    phaseStartTime,
+    baseLimit,
+    baseFlightDuration,
+    roundStartTime: tempTime
+  };
 }
 
 export default function App() {
@@ -583,7 +603,7 @@ export default function App() {
   }, [sessionLimit, sessionTimeLeftSecs]);
   
   // Game flight states
-  const [roundIndex, setRoundIndex] = useState<number>(() => Math.floor(Date.now() / 42000));
+  const [roundIndex, setRoundIndex] = useState<number>(() => getGameStateAtTime(Date.now()).roundIndex);
   const [currentPhase, setCurrentPhase] = useState<'lobby' | 'flight' | 'crashed'>('lobby');
   const [crashActive, setCrashActive] = useState<boolean>(false);
   const [crashMultiplier, setCrashMultiplier] = useState<number>(1.00);
@@ -593,6 +613,25 @@ export default function App() {
 
   const [socketConnected, setSocketConnected] = useState<boolean>(false);
   const socketRef = useRef<WebSocket | null>(null);
+
+  const currentPhaseRef = useRef<'lobby' | 'flight' | 'crashed'>('lobby');
+  const crashMultiplierRef = useRef<number>(1.00);
+  const roundCrashLimitRef = useRef<number>(2.50);
+  
+  const lastProcessedPhaseRef = useRef<'lobby' | 'flight' | 'crashed' | null>(null);
+  const lastProcessedRoundRef = useRef<number>(-1);
+
+  useEffect(() => {
+    currentPhaseRef.current = currentPhase;
+  }, [currentPhase]);
+
+  useEffect(() => {
+    crashMultiplierRef.current = crashMultiplier;
+  }, [crashMultiplier]);
+
+  useEffect(() => {
+    roundCrashLimitRef.current = roundCrashLimit;
+  }, [roundCrashLimit]);
 
   // Recent multiplier outcomes matching the list pictured in user screenshots
   const [historyList, setHistoryList] = useState<number[]>([
@@ -740,53 +779,566 @@ export default function App() {
   }, [wallet.demoBalance, authSessionMode]);
 
   // M-Pesa overlay indicator State
+  const [showMobileBets, setShowMobileBets] = useState<boolean>(false);
   const [isDepositOpen, setIsDepositOpen] = useState<boolean>(false);
   const [isProfileOpen, setIsProfileOpen] = useState<boolean>(false);
   const [isDownloadAppOpen, setIsDownloadAppOpen] = useState<boolean>(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
   const [isChatOpen, setIsChatOpen] = useState<boolean>(false);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
-    { id: 'm1', username: 'Kamau_KE', text: 'JetCash is giving crazy runs today! 🚀', timestamp: '09:12' },
-    { id: 'm2', username: 'Wanjiku_Win', text: 'Cashed out on 5.4x, lets go! 🔥💵', timestamp: '09:15' },
-    { id: 'm3', username: 'Mwangi_001', text: 'Almost hit the 15x, better luck next time!', timestamp: '09:20' },
-    { id: 'm4', username: 'Amani_254', text: 'Wow!', timestamp: '09:24' }
+    { id: 'm1', username: 'Kamau_KE', text: 'next round running bet tuko rada sana 🔥', timestamp: '09:12' },
+    { id: 'm2', username: 'Wanjiku_Win', text: 'buda timing ya running bet sasa hivi ndio kila kitu', timestamp: '09:15' },
+    { id: 'm3', username: 'Mwangi_001', text: 'buda prepare for next round running bet', timestamp: '09:20' },
+    { id: 'm4', username: 'Amani_254', text: 'best time to start running bet is now', timestamp: '09:24' }
   ]);
   const [switchModeTargetState, setSwitchModeTargetState] = useState<'real' | 'demo' | null>(null);
 
   // Periodic simulated lounge chat banter
-  useEffect(() => {
-    const chatPhrases = [
-      'Nice win! 🎉',
-      'Better luck next time! 👍',
-      'Wow!',
-      'JetCash to the moon! 🚀',
-      'Let\'s gooo! 🙌',
-      'So close! 🤏',
-      'Oh no, crashed! 💥',
-      'Play safe guys! 🛡️',
-      'High risk, high reward! 💎',
-      'Wait for the big one! 🐉',
-      'Withdraw on time! ⏱️',
-      'Next round is 10x! 🔥',
-      'Got 2.5x, I\'m happy! 😎',
-      'Perfect flight!',
-      'Unbelievable multiplier! 🔥'
-    ];
+  const recentMessagesRef = useRef<string[]>([]);
 
+  useEffect(() => {
     const generateSimulatedMessage = () => {
-      // Pick dynamic sender from COMPANION_USERS list to keep community style
-      const idx1 = Math.floor(Math.random() * COMPANION_USERS.length);
-      const user = COMPANION_USERS[idx1];
-      const idx2 = Math.floor(Math.random() * chatPhrases.length);
-      const phrase = chatPhrases[idx2];
-      
+      const phase = currentPhaseRef.current;
+      const mult = crashMultiplierRef.current;
+      const lastLimit = roundCrashLimitRef.current;
+
+      // Select a subset of active users based on the current minute block (e.g. changes every 3 minutes)
+      // This simulates that players are not online all the time
+      const timeBlock = Math.floor(Date.now() / (3 * 60 * 1000));
+      const activePlayers = COMPANION_USERS.filter((_, index) => {
+        const hash = Math.sin(timeBlock + index * 37) * 10000;
+        const rand = hash - Math.floor(hash);
+        return rand < 0.35; // ~35% chance to be active
+      });
+
+      // Fallback: make sure at least 3 players are online
+      const currentActivePool = activePlayers.length >= 3 
+        ? activePlayers 
+        : [COMPANION_USERS[0], COMPANION_USERS[1], COMPANION_USERS[2], COMPANION_USERS[3]];
+
+      // Pick a random sender from the currently online active pool
+      const user = currentActivePool[Math.floor(Math.random() * currentActivePool.length)];
+
+      let userPool: string[] = [];
+
+      // Define user-specific styles to ensure variety and different vocabularies
+      if (user === 'Kamau_KE') {
+        if (phase === 'lobby') {
+          userPool = [
+            `buda next round running bet tuko ndani kabisa`,
+            `weka running bet ya next round mapema wasee`,
+            `buda prepare for next round running bet upesi`,
+            `getting ready for the next round running bet`
+          ];
+        } else if (phase === 'flight') {
+          userPool = [
+            `running bet yetu inapaa fiti mwanangu`,
+            `shikilia hiyo running bet isonge juu mkuu`,
+            `buda look at the running bet inavyopaa`,
+            `this running bet is going high speed`
+          ];
+        } else if (phase === 'crashed') {
+          userPool = [
+            `imecrash haraka lakini next round running bet tuko rada`,
+            `hapa tumegongwa mzee lakini next round tuko fiti`,
+            `buda timing mbaya sana next round tutatoboa`,
+            `bad timing but next round is the safe bet`
+          ];
+        } else {
+          userPool = [
+            `buda timing ya running bet ndio kila kitu`,
+            `nani ako online tucheze next round running bet`,
+            `weka running bet sasa hivi kabla round kuanza`,
+            `perfect timing for next round running bet`
+          ];
+        }
+      } else if (user === 'Amani_254') {
+        if (phase === 'lobby') {
+          userPool = [
+            `subiri kwanza next round running bet ndio hiyo`,
+            `mimi hapa nangojea coming next round running bet`,
+            `tujiandae na running bet ya next round wasee`,
+            `waiting for the next round running bet`
+          ];
+        } else if (phase === 'flight') {
+          userPool = [
+            `running bet inapanda na kasi fiti`,
+            `oya angalia vile running bet yetu inapaa`,
+            `buda inapanda kwenda juu bila wasiwasi`,
+            `this is an amazing running bet flight`
+          ];
+        } else if (phase === 'crashed') {
+          userPool = [
+            `imeanguka lakini coming next round running bet itakuwa safe`,
+            `pole sana wasee next round tutaitwanga vizuri`,
+            `tumeumia round hii lakini next round tutatoboa`,
+            `it crashed but next round is definitely ours`
+          ];
+        } else {
+          userPool = [
+            `buda sasa ndio wakati fiti wa running bet`,
+            `always target next round running bet kwa wakati`,
+            `weka running bet sasa bila kuchelewa`,
+            `the right time for running bet is now`
+          ];
+        }
+      } else if (user === 'Mpesa_King') {
+        if (phase === 'lobby') {
+          userPool = [
+            `mpesa iko tayari kwa next round running bet`,
+            `coming next round running bet tujiandae kuweka`,
+            `weka mpesa tayari roundi hii inakuja fiti`,
+            `preparing cash for the next round running bet`
+          ];
+        } else if (phase === 'flight') {
+          userPool = [
+            `running bet inapanda na multiplier inakaa safi`,
+            `weka kidole karibu kucashout running bet`,
+            `running bet inapendeza inavyozidi kwenda juu`,
+            `the multiplier looks good on running bet`
+          ];
+        } else if (phase === 'crashed') {
+          userPool = [
+            `ime crash lakini next round tutabeba doh na running bet`,
+            `tuta recover hasara next round running bet ikianza`,
+            `imecrash haraka lakini next round tuko fiti kabisa`,
+            `we lost that one but next round is active`
+          ];
+        } else {
+          userPool = [
+            `running bet inalipa vizuri mpesa ishasoma`,
+            `buda withdraw sasa hivi baada ya running bet`,
+            `doh inasomeka mpesa baada ya running bet`,
+            `easy withdrawal after next round running bet`
+          ];
+        }
+      } else if (user === 'Wanjiku_Win') {
+        if (phase === 'lobby') {
+          userPool = [
+            `running bet ya next round itakuwa kubwa wasee`,
+            `tujiunge sote kwa next round running bet`,
+            `subiri kidogo next round tujiandae kuweka`,
+            `holding cash for the coming next round`
+          ];
+        } else if (phase === 'flight') {
+          userPool = [
+            `running bet inazidi kupaa kwenda juu`,
+            `hii running bet ya sasa hivi inatupa furaha`,
+            `angalia inavyozidi kupaa kwa kasi`,
+            `aiming for the high peak on this running bet`
+          ];
+        } else if (phase === 'crashed') {
+          userPool = [
+            `ime crash mzee lakini next round running bet iko safe`,
+            `tujaribu bahati yetu kwa next round running bet`,
+            `ime crash mapema mzee next round tutashinda`,
+            `unfortunate crash but we go next round`
+          ];
+        } else {
+          userPool = [
+            `wakati mzuri wa kucheza running bet ndio huu`,
+            `running bet inaleta ushindi fiti sana`,
+            `tuweke running bet kwa wakati fiti`,
+            `good luck everyone in the next round`
+          ];
+        }
+      } else if (user === 'Mwangi_001') {
+        if (phase === 'lobby') {
+          userPool = [
+            `next round running bet tuko rada mbaya sana`,
+            `wasee coming next round running bet isha load`,
+            `weka running bet ya next round upesi mzee`,
+            `lobby is full for next round running bet`
+          ];
+        } else if (phase === 'flight') {
+          userPool = [
+            `oya ona vile running bet inapaa na hasira`,
+            `shikilia hiyo running bet isigonge crash mapema`,
+            `inapaa vizuri mzee usitoe mapema mno`,
+            `look at the running bet multiplier climbing`
+          ];
+        } else if (phase === 'crashed') {
+          userPool = [
+            `aiii imecrash mapema lakini next round tutatoboa`,
+            `nilichelewa nusu sekunde kucashout running bet`,
+            `ime crash mwanangu lakini next round tuko fiti`,
+            `it crashed so fast but next round we try`
+          ];
+        } else {
+          userPool = [
+            `buda tuchape sheng tu na next round running bet`,
+            `sasa ndio wakati wa kuweka hiyo running bet`,
+            `running bet yetu ya next round ndio siri`,
+            `keep your focus on the next round`
+          ];
+        }
+      } else if (user === 'Otieno_Hustler') {
+        if (phase === 'lobby') {
+          userPool = [
+            `hustler yuko tayari kwa next round running bet`,
+            `buda weka running bet ya next round upesi`,
+            `hapa tuko tayari kwa next round running bet`,
+            `ready for the next round running bet run`
+          ];
+        } else if (phase === 'flight') {
+          userPool = [
+            `hapa ndio wakati running bet inatupa faida`,
+            `angalia running bet inazidi kwenda juu sana`,
+            `running bet inapaa fiti mzee tushikilie`,
+            `this running bet is flying to the peak`
+          ];
+        } else if (phase === 'crashed') {
+          userPool = [
+            `imeanguka lakini coming next round running bet iko safi`,
+            `crashed mwanangu lakini next round tuko rada fiti`,
+            `imeanguka mapema mno mzee next round tuko rada`,
+            `unlucky crash but next round we ride again`
+          ];
+        } else {
+          userPool = [
+            `kazi bado inaendelea na next round running bet`,
+            `buda timing ya running bet sasa hivi ndio fiti kabisa`,
+            `weka running bet mapema mzee bila uoga`,
+            `always on the watch for the next round`
+          ];
+        }
+      } else if (user === 'ShillingSlinger') {
+        if (phase === 'lobby') {
+          userPool = [
+            `shilingi ziko tayari kwa next round running bet`,
+            `buda tujiunge kwenye lobby ya next round running bet`,
+            `tunaweka running bet ya next round sasa hivi`,
+            `joining the lobby for the next round bet`
+          ];
+        } else if (phase === 'flight') {
+          userPool = [
+            `running bet inakaa safi na inapanda vizuri`,
+            `multiplier ya running bet inatupa faida kubwa`,
+            `running bet inapaa fiti sana roundi hii`,
+            `this is a very successful running bet run`
+          ];
+        } else if (phase === 'crashed') {
+          userPool = [
+            `tumekosa hiyo lakini next round running bet ndio mpango`,
+            `imecrash lakini tujiandae kwa next round running bet`,
+            `imecrash haraka mzee next round tutafaulu`,
+            `early crash_but next round we go again`
+          ];
+        } else {
+          userPool = [
+            `running bet inaleta faida ya haraka leo`,
+            `buda weka bidii kwa running bet sasa hivi`,
+            `wakati mzuri wa running bet ndio huu mzee`,
+            `shillings active on the running bet now`
+          ];
+        }
+      } else if (user === 'Njoroge_Bettor') {
+        if (phase === 'lobby') {
+          userPool = [
+            `nimefanya hesabu ya next round running bet`,
+            `wakati wa kupanga running bet ya next round ndio huu`,
+            `hesabu ya running bet next round iko fiti`,
+            `calculating entry for the next round bet`
+          ];
+        } else if (phase === 'flight') {
+          userPool = [
+            `running bet inapanda kwa kasi ya kawaida`,
+            `hesabu ya running bet ya sasa hivi iko sawa kabisa`,
+            `angalia vile multiplier inavyopanda kwa usawa`,
+            `monitoring the running bet multiplier speed`
+          ];
+        } else if (phase === 'crashed') {
+          userPool = [
+            `imecrash lakini next round running bet ndio focus yetu`,
+            `tujiandae kwa running bet ya next round mara moja`,
+            `ime crash mapema hesabu ya next round tuko rada`,
+            `unfortunate result but next round is clear`
+          ];
+        } else {
+          userPool = [
+            `timing ya running bet sasa hivi iko sawa kabisa`,
+            `mzee hesabu haidanganyi kwa running bet`,
+            `buda timing ndio siri ya running bet yetu`,
+            `stay focused on the next round multiplier`
+          ];
+        }
+      } else if (user === 'Kibet_Racer') {
+        if (phase === 'lobby') {
+          userPool = [
+            `mbio hadi next round running bet wasee`,
+            `running bet ya next round ishaanza kuwa tayari`,
+            `kimbia uweke running bet ya next round mapema`,
+            `getting fast ready for the next round`
+          ];
+        } else if (phase === 'flight') {
+          userPool = [
+            `kasi ya running bet sasa hivi ni ya ajabu`,
+            `running bet inapiga mbio kwenda juu fiti`,
+            `inapaa kwa kasi mzee cashout mapema`,
+            `this running bet is flying super fast`
+          ];
+        } else if (phase === 'crashed') {
+          userPool = [
+            `ime crash kwa kasi lakini next round tuko fiti`,
+            `bad timing lakini next round running bet tutakimbia nayo`,
+            `ime crash haraka mno next round tutatoboa`,
+            `speed crash but next round is a safe run`
+          ];
+        } else {
+          userPool = [
+            `running bet inalipa haraka sana leo mkuu`,
+            `buda kasi ya running bet ndio siri hapa`,
+            `weka running bet ya sasa hivi kwa mbio`,
+            `fast cash is waiting on the next round`
+          ];
+        }
+      } else if (user === 'Zuri_Zuri') {
+        if (phase === 'lobby') {
+          userPool = [
+            `subiri kidogo coming next round running bet tujiandae`,
+            `running bet ya next round itakuwa nzuri sana`,
+            `amani wasee next round running bet inakuja`,
+            `let us wait for the next round running bet`
+          ];
+        } else if (phase === 'flight') {
+          userPool = [
+            `running bet inapendeza inavyozidi kupanda`,
+            `kasi ya running bet ya sasa hivi ni safi kabisa`,
+            `tunaenda mbali na hii running bet mzee`,
+            `this running bet flight looks beautiful`
+          ];
+        } else if (phase === 'crashed') {
+          userPool = [
+            `pole sana lakini coming next round running bet tutashinda`,
+            `jaribu tena next round running bet bila wasiwasi`,
+            `imecrash mzee lakini next round tutashinda tena`,
+            `it crashed but coming next round is safe`
+          ];
+        } else {
+          userPool = [
+            `mungu mbele tutakula next round running bet`,
+            `running bet yetu iko sawa kabisa leo mzee`,
+            `ushindi utapatikana kwa running bet roundi ijayo`,
+            `peace and big wins on the next round`
+          ];
+        }
+      } else if (user === 'Mama_Mboga_VIP') {
+        if (phase === 'lobby') {
+          userPool = [
+            `tayari kwa next round running bet soko safi`,
+            `running bet ya next round inakaa kuleta faida kubwa`,
+            `soko inafunguliwa kwa next round running bet`,
+            `market is ready for next round running bet`
+          ];
+        } else if (phase === 'flight') {
+          userPool = [
+            `running bet inapanda bei fiti sana`,
+            `angalia running bet ya sasa inavyotupa faida`,
+            `soko yetu ya running bet inapanda sana leo`,
+            `the multiplier is rising for our running bet`
+          ];
+        } else if (phase === 'crashed') {
+          userPool = [
+            `soko imecrash lakini next round tutafaulu fiti`,
+            `next round running bet tutapata faida yetu mzee`,
+            `soko imeanguka next round running bet tuko ndani`,
+            `early crash but next round we sell better`
+          ];
+        } else {
+          userPool = [
+            `biashara ya running bet inalipa vizuri sana`,
+            `buda soko ya running bet sasa hivi iko sawa`,
+            `faida kubwa inapatikana kwenye running bet sasa`,
+            `next round is always profitable for us`
+          ];
+        }
+      } else {
+        if (phase === 'lobby') {
+          userPool = [
+            `next round running bet tujiandae kuweka mapema`,
+            `coming next round running bet inaload fiti`,
+            `weka running bet yako ya next round upesi`,
+            `ready for the next round running bet`
+          ];
+        } else if (phase === 'flight') {
+          userPool = [
+            `running bet inazidi kwenda juu sana`,
+            `oya angalia running bet yetu inapaa`,
+            `running bet inapaa fiti mzee tushikilie`,
+            `running bet is going up nicely now`
+          ];
+        } else if (phase === 'crashed') {
+          userPool = [
+            `ime crash mzee lakini next round tuko fiti`,
+            `tutajaribu tena next round running bet`,
+            `ime crash mapema mzee next round tutafaulu`,
+            `crashed but next round is safe to bet`
+          ];
+        } else {
+          userPool = [
+            `buda timing ya running bet ndio siri ya ushindi`,
+            `always target next round running bet fiti`,
+            `timing ya running bet sasa hivi ndio siri`,
+            `perfect timing for next round running bet`
+          ];
+        }
+      }
+
+      // Special handling for crash limit above 4x
+      if (phase === 'crashed' && lastLimit > 4) {
+        if (user === 'Kamau_KE') {
+          userPool = [
+            `buda hiyo ilikuwa ushindi mkubwa wa running bet juu ya 4x`,
+            `yaani imegonga over 4x na nime crash mapema sana mkuu`,
+            `congrats kwa wale walishikilia hiyo running bet hadi over 4x`,
+            `buda nimegongwa nikiwa bado nangojea running bet igonge 4x`,
+            `that was a massive win on the running bet above 4x`
+          ];
+        } else if (user === 'Amani_254') {
+          userPool = [
+            `ushindi mzuri sana wa running bet kuvuka multiplier ya 4x`,
+            `pole sana nime crash mapema mno kwenye hiyo running bet kubwa`,
+            `wow pongezi kwa kila mtu aliyeshikilia running bet hadi past 4x`,
+            `timing mbaya nilipoteza running bet baada ya kungojea sana`,
+            `great run for the running bet exceeding 4x multiplier`
+          ];
+        } else if (user === 'Mpesa_King') {
+          userPool = [
+            `payout kubwa sana ya running bet juu ya 4x mpesa ishasoma`,
+            `nilipoteza running bet baada ya 4x imecrash haraka sana`,
+            `hongera kwa wote waliogonga 4x multiplier kwenye running bet`,
+            `sina bahati nilitoka mapema wakati running bet inagonga 4x`,
+            `big payout for the running bet above 4x mpesa ready`
+          ];
+        } else if (user === 'Wanjiku_Win') {
+          userPool = [
+            `ushindi wa ajabu kwenye running bet kupita 4x multiplier`,
+            `kwa bahati mbaya nilikosa hiyo running bet tamu juu ya 4x`,
+            `pongezi kwa washindi wote kwenye hii running bet ya over 4x`,
+            `tamaa yangu ilifanya nipoteze running bet baada ya kungojea 4x`,
+            `amazing win on the running bet past 4x multiplier`
+          ];
+        } else if (user === 'Mwangi_001') {
+          userPool = [
+            `running bet hadi mwezini juu ya 4x pongezi wasee`,
+            `aiii imecrash after 4x nilichelewa nusu sekunde yaani`,
+            `sheng tu hiyo running bet multiplier ya 4x ilikuwa crazy`,
+            `buda nilitolewa mapema sana kabla running bet igonge 4x`,
+            `running bet to the moon over 4x congrats guys`
+          ];
+        } else if (user === 'Otieno_Hustler') {
+          userPool = [
+            `hustle inalipa vizuri na hiyo running bet ya juu ya 4x`,
+            `bahati mbaya crash baada ya 4x kwenye running bet next round mkuu`,
+            `timing safi kwa walio cashout juu ya 4x kwenye running bet`,
+            `buda running bet imegonga 4x na mimi nilitoka mapema`,
+            `hustle paying well with that 4x plus running bet`
+          ];
+        } else if (user === 'ShillingSlinger') {
+          userPool = [
+            `shilingi ziko safi sana na running bet juu ya 4x mzee`,
+            `nime crash mapema mno nikakosa hiyo running bet ya 4x`,
+            `ushindi mzuri sana wa running bet past 4x pongezi wasee`,
+            `nilipoteza running bet yangu baada ya kungoja multiplier ya 4x`,
+            `shillings looking super nice with the running bet above 4x`
+          ];
+        } else if (user === 'Njoroge_Bettor') {
+          userPool = [
+            `hesabu imekubali running bet imegonga juu ya 4x pongezi`,
+            `matokeo mabaya nimepoteza running bet nikilenga juu ya 4x`,
+            `pongezi kwa wote waliobaki juu ya 4x kwenye running bet`,
+            `analysis ilifeli nikacrash kwenye running bet kupita 4x`,
+            `perfect simulation running bet hit over 4x congrats`
+          ];
+        } else if (user === 'Kibet_Racer') {
+          userPool = [
+            `kasi ya ajabu running bet kupita 4x pongezi wasee`,
+            `nime crash kwa kasi ya juu ya 4x kwenye running bet`,
+            `mbio safi kwenye running bet ikigonga zaidi ya 4x`,
+            `kasi ilizidi nikacrash kabla ya kufikisha running bet 4x`,
+            `insane speed running bet past 4x congratulations`
+          ];
+        } else if (user === 'Zuri_Zuri') {
+          userPool = [
+            `pongezi kubwa kwa ushindi wa running bet juu ya 4x mzee`,
+            `pole sana nimepoteza running bet yangu baada ya 4x`,
+            `mungu mbele ushindi mkubwa wa running bet 4x umepatikana`,
+            `nimechelewa kucashout kwa running bet hadi ikacrash past 4x`,
+            `congratulations on the running bet above 4x multiplier`
+          ];
+        } else if (user === 'Mama_Mboga_VIP') {
+          userPool = [
+            `faida kubwa sana na running bet juu ya 4x biashara safi`,
+            `soko imecrash baada ya 4x nikapoteza running bet yangu mzee`,
+            `hongera kwa waliofikisha running bet mbali juu ya 4x`,
+            `nilitoka mapema mno kabla ya running bet kugonga 4x soko fiti`,
+            `market was amazing running bet hit over 4x successfully`
+          ];
+        } else {
+          userPool = [
+            `pongezi kwa kila mtu aliyewahi running bet juu ya 4x`,
+            `bahati mbaya crash baada ya 4x kwenye running bet next round`,
+            `ushindi mzuri wa running bet kupita multiplier ya 4x`,
+            `nilipoteza running bet yangu baada ya kungoja over 4x`,
+            `unfortunate loss on the running bet after waiting too long`
+          ];
+        }
+      }
+
+      // Try to find a phrase that is NOT in our recent messages list
+      let chosenText = '';
+      let attempts = 0;
+      while (attempts < 20) {
+        const candidate = userPool[Math.floor(Math.random() * userPool.length)];
+        if (!recentMessagesRef.current.includes(candidate)) {
+          chosenText = candidate;
+          break;
+        }
+        attempts++;
+      }
+      if (!chosenText) {
+        // Fallback: modify a random one slightly so it is unique
+        const candidate = userPool[Math.floor(Math.random() * userPool.length)];
+        const extraWords = [' sasa', ' mkuu', ' wasee', ' buda', ' kweli', ' safe', ' man', ' guy'];
+        const word = extraWords[Math.floor(Math.random() * extraWords.length)];
+        chosenText = `${candidate}${word}`;
+      }
+
+      // Force starting with a lowercase letter and remove any accidental punctuation
+      if (chosenText) {
+        chosenText = chosenText.charAt(0).toLowerCase() + chosenText.slice(1);
+        chosenText = chosenText.replace(/[!.?,]/g, '');
+      }
+
+      // 10% chance to append realistic human-texted emoji(s)
+      if (Math.random() < 0.10) {
+        let emojisList: string[] = [];
+        if (phase === 'flight') {
+          emojisList = [' 🔥', ' 🚀', ' 🤑', ' 💰', ' 😎', ' 🚀🔥', ' 💰💰', ' 🙌', ' 📈', ' 🔥🔥', ' 🤑🔥'];
+        } else if (phase === 'crashed') {
+          emojisList = [' 😭', ' 🤦', ' 💔', ' 📉', ' 💀', ' 😭😂', ' 💀💀', ' 🥴', ' 😡', ' 🤦‍♂️', ' 😭💔'];
+        } else if (phase === 'lobby') {
+          emojisList = [' 🤞', ' 🙏', ' 👍', ' 💯', ' 🙏🤞', ' 👍👍', ' 🤞🤞', ' 💯🔥', ' 🔥', ' 🚀'];
+        } else {
+          emojisList = [' 😂', ' 🔥', ' 👍', ' 😎', ' 🙌', ' 💀', ' 😂😂', ' 🙏', ' 💯', ' 💀💀', ' 🔥🔥'];
+        }
+        const chosenEmoji = emojisList[Math.floor(Math.random() * emojisList.length)];
+        chosenText += chosenEmoji;
+      }
+
+      // Track the message in our recent history
+      recentMessagesRef.current.push(chosenText);
+      if (recentMessagesRef.current.length > 25) {
+        recentMessagesRef.current.shift();
+      }
+
       const newMsg: ChatMessage = {
         id: `sim-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
         username: user,
-        text: phrase,
+        text: chosenText,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
       };
-      
+
       setChatMessages(prev => {
         const updated = [...prev, newMsg];
         if (updated.length > 45) {
@@ -812,18 +1364,22 @@ export default function App() {
   }, []);
 
   const handleSendChatMessage = (text: string) => {
+    let formattedText = text.trim();
+    if (formattedText) {
+      formattedText = formattedText.charAt(0).toLowerCase() + formattedText.slice(1);
+    }
     if (socketConnected && socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
       socketRef.current.send(JSON.stringify({
         type: 'CHAT_MESSAGE',
         sender: userProfile.username || 'francypendy',
-        text: text,
+        text: formattedText,
         vipLevel: userProfile.vipLevel || 'Bronze'
       }));
     } else {
       const newMsg: ChatMessage = {
         id: `me-${Date.now()}`,
         username: userProfile.username || 'francypendy',
-        text: text,
+        text: formattedText,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         isMe: true
       };
@@ -849,28 +1405,65 @@ export default function App() {
     );
   };
 
-  // Individual dual bet panels data synchronized state
-  const [panel1Placed, setPanel1Placed] = useState<boolean>(false);
-  const [panel1Cashed, setPanel1Cashed] = useState<boolean>(false);
-  const [panel1BetVal, setPanel1BetVal] = useState<number>(0);
-  const [panel1NextPlaced, setPanel1NextPlaced] = useState<boolean>(false);
-  const [panel1NextBetVal, setPanel1NextBetVal] = useState<number>(0);
+  // For Real Account
+  const [realPanel1Placed, setRealPanel1Placed] = useState<boolean>(false);
+  const [realPanel1Cashed, setRealPanel1Cashed] = useState<boolean>(false);
+  const [realPanel1BetVal, setRealPanel1BetVal] = useState<number>(0);
+  const [realPanel1NextPlaced, setRealPanel1NextPlaced] = useState<boolean>(false);
+  const [realPanel1NextBetVal, setRealPanel1NextBetVal] = useState<number>(0);
 
-  const [panel2Placed, setPanel2Placed] = useState<boolean>(false);
-  const [panel2Cashed, setPanel2Cashed] = useState<boolean>(false);
-  const [panel2BetVal, setPanel2BetVal] = useState<number>(0);
-  const [panel2NextPlaced, setPanel2NextPlaced] = useState<boolean>(false);
-  const [panel2NextBetVal, setPanel2NextBetVal] = useState<number>(0);
+  const [realPanel2Placed, setRealPanel2Placed] = useState<boolean>(false);
+  const [realPanel2Cashed, setRealPanel2Cashed] = useState<boolean>(false);
+  const [realPanel2BetVal, setRealPanel2BetVal] = useState<number>(0);
+  const [realPanel2NextPlaced, setRealPanel2NextPlaced] = useState<boolean>(false);
+  const [realPanel2NextBetVal, setRealPanel2NextBetVal] = useState<number>(0);
+
+  // For Demo Account
+  const [demoPanel1Placed, setDemoPanel1Placed] = useState<boolean>(false);
+  const [demoPanel1Cashed, setDemoPanel1Cashed] = useState<boolean>(false);
+  const [demoPanel1BetVal, setDemoPanel1BetVal] = useState<number>(0);
+  const [demoPanel1NextPlaced, setDemoPanel1NextPlaced] = useState<boolean>(false);
+  const [demoPanel1NextBetVal, setDemoPanel1NextBetVal] = useState<number>(0);
+
+  const [demoPanel2Placed, setDemoPanel2Placed] = useState<boolean>(false);
+  const [demoPanel2Cashed, setDemoPanel2Cashed] = useState<boolean>(false);
+  const [demoPanel2BetVal, setDemoPanel2BetVal] = useState<number>(0);
+  const [demoPanel2NextPlaced, setDemoPanel2NextPlaced] = useState<boolean>(false);
+  const [demoPanel2NextBetVal, setDemoPanel2NextBetVal] = useState<number>(0);
+
+  const isReal = authSessionMode === 'real';
+
+  const panel1Placed = isReal ? realPanel1Placed : demoPanel1Placed;
+  const setPanel1Placed = isReal ? setRealPanel1Placed : setDemoPanel1Placed;
+  const panel1Cashed = isReal ? realPanel1Cashed : demoPanel1Cashed;
+  const setPanel1Cashed = isReal ? setRealPanel1Cashed : setDemoPanel1Cashed;
+  const panel1BetVal = isReal ? realPanel1BetVal : demoPanel1BetVal;
+  const setPanel1BetVal = isReal ? setRealPanel1BetVal : setDemoPanel1BetVal;
+  const panel1NextPlaced = isReal ? realPanel1NextPlaced : demoPanel1NextPlaced;
+  const setPanel1NextPlaced = isReal ? setRealPanel1NextPlaced : setDemoPanel1NextPlaced;
+  const panel1NextBetVal = isReal ? realPanel1NextBetVal : demoPanel1NextBetVal;
+  const setPanel1NextBetVal = isReal ? setRealPanel1NextBetVal : setDemoPanel1NextBetVal;
+
+  const panel2Placed = isReal ? realPanel2Placed : demoPanel2Placed;
+  const setPanel2Placed = isReal ? setRealPanel2Placed : setDemoPanel2Placed;
+  const panel2Cashed = isReal ? realPanel2Cashed : demoPanel2Cashed;
+  const setPanel2Cashed = isReal ? setRealPanel2Cashed : setDemoPanel2Cashed;
+  const panel2BetVal = isReal ? realPanel2BetVal : demoPanel2BetVal;
+  const setPanel2BetVal = isReal ? setRealPanel2BetVal : setDemoPanel2BetVal;
+  const panel2NextPlaced = isReal ? realPanel2NextPlaced : demoPanel2NextPlaced;
+  const setPanel2NextPlaced = isReal ? setRealPanel2NextPlaced : setDemoPanel2NextPlaced;
+  const panel2NextBetVal = isReal ? realPanel2NextBetVal : demoPanel2NextBetVal;
+  const setPanel2NextBetVal = isReal ? setRealPanel2NextBetVal : setDemoPanel2NextBetVal;
 
   // Growth loop ticker references
   const mainTickerInterval = useRef<NodeJS.Timeout | null>(null);
   const countdownInterval = useRef<NodeJS.Timeout | null>(null);
 
   // Synchronized Multi-Device Ticker Refs
-  const panel1ActiveBetRef = useRef<number | null>(null);
-  const panel2ActiveBetRef = useRef<number | null>(null);
-  const panel1NextRoundBetRef = useRef<number | null>(null);
-  const panel2NextRoundBetRef = useRef<number | null>(null);
+  const panel1ActiveBetRef = useRef<{ demo: number | null; real: number | null }>({ demo: null, real: null });
+  const panel2ActiveBetRef = useRef<{ demo: number | null; real: number | null }>({ demo: null, real: null });
+  const panel1NextRoundBetRef = useRef<{ demo: number | null; real: number | null }>({ demo: null, real: null });
+  const panel2NextRoundBetRef = useRef<{ demo: number | null; real: number | null }>({ demo: null, real: null });
   const panel1BetModeRef = useRef<'demo' | 'real' | null>(null);
   const panel2BetModeRef = useRef<'demo' | 'real' | null>(null);
   const panel1NextRoundBetModeRef = useRef<'demo' | 'real' | null>(null);
@@ -878,6 +1471,71 @@ export default function App() {
   const bothBetsPlacedInRoundRef = useRef<boolean>(false);
   const gamePhaseRef = useRef<'lobby' | 'flight' | 'crashed' | null>(null);
   const currentRoundIndexRef = useRef<number>(-1);
+
+  // Helper to transition next round pre-placed bets for both modes independently
+  const transitionNextRoundBets = () => {
+    // Panel 1 Real
+    if (panel1NextRoundBetRef.current.real !== null) {
+      panel1ActiveBetRef.current.real = panel1NextRoundBetRef.current.real;
+      panel1NextRoundBetRef.current.real = null;
+      setRealPanel1Placed(true);
+      setRealPanel1Cashed(false);
+      setRealPanel1BetVal(panel1ActiveBetRef.current.real);
+    } else {
+      setRealPanel1Placed(false);
+      setRealPanel1Cashed(false);
+      setRealPanel1BetVal(0);
+    }
+    setRealPanel1NextPlaced(false);
+    setRealPanel1NextBetVal(0);
+
+    // Panel 1 Demo
+    if (panel1NextRoundBetRef.current.demo !== null) {
+      panel1ActiveBetRef.current.demo = panel1NextRoundBetRef.current.demo;
+      panel1NextRoundBetRef.current.demo = null;
+      setDemoPanel1Placed(true);
+      setDemoPanel1Cashed(false);
+      setDemoPanel1BetVal(panel1ActiveBetRef.current.demo);
+    } else {
+      setDemoPanel1Placed(false);
+      setDemoPanel1Cashed(false);
+      setDemoPanel1BetVal(0);
+    }
+    setDemoPanel1NextPlaced(false);
+    setDemoPanel1NextBetVal(0);
+
+    // Panel 2 Real
+    if (panel2NextRoundBetRef.current.real !== null) {
+      panel2ActiveBetRef.current.real = panel2NextRoundBetRef.current.real;
+      panel2NextRoundBetRef.current.real = null;
+      setRealPanel2Placed(true);
+      setRealPanel2Cashed(false);
+      setRealPanel2BetVal(panel2ActiveBetRef.current.real);
+    } else {
+      setRealPanel2Placed(false);
+      setRealPanel2Cashed(false);
+      setRealPanel2BetVal(0);
+    }
+    setRealPanel2NextPlaced(false);
+    setRealPanel2NextBetVal(0);
+
+    // Panel 2 Demo
+    if (panel2NextRoundBetRef.current.demo !== null) {
+      panel2ActiveBetRef.current.demo = panel2NextRoundBetRef.current.demo;
+      panel2NextRoundBetRef.current.demo = null;
+      setDemoPanel2Placed(true);
+      setDemoPanel2Cashed(false);
+      setDemoPanel2BetVal(panel2ActiveBetRef.current.demo);
+    } else {
+      setDemoPanel2Placed(false);
+      setDemoPanel2Cashed(false);
+      setDemoPanel2BetVal(0);
+    }
+    setDemoPanel2NextPlaced(false);
+    setDemoPanel2NextBetVal(0);
+
+    bothBetsPlacedInRoundRef.current = false;
+  };
 
   // Helper to get adjusted/capped round limit based on active real bets
   const getCurrentRoundLimit = (index: number) => {
@@ -901,11 +1559,17 @@ export default function App() {
       }
     };
 
-    if (panel1ActiveBetRef.current !== null && panel1ActiveBetRef.current > 0) {
-      checkBet(panel1ActiveBetRef.current, panel1BetModeRef.current);
+    if (panel1ActiveBetRef.current.real !== null && panel1ActiveBetRef.current.real > 0) {
+      checkBet(panel1ActiveBetRef.current.real, 'real');
     }
-    if (panel2ActiveBetRef.current !== null && panel2ActiveBetRef.current > 0) {
-      checkBet(panel2ActiveBetRef.current, panel2BetModeRef.current);
+    if (panel1ActiveBetRef.current.demo !== null && panel1ActiveBetRef.current.demo > 0) {
+      checkBet(panel1ActiveBetRef.current.demo, 'demo');
+    }
+    if (panel2ActiveBetRef.current.real !== null && panel2ActiveBetRef.current.real > 0) {
+      checkBet(panel2ActiveBetRef.current.real, 'real');
+    }
+    if (panel2ActiveBetRef.current.demo !== null && panel2ActiveBetRef.current.demo > 0) {
+      checkBet(panel2ActiveBetRef.current.demo, 'demo');
     }
 
     if (maxAllowed !== Infinity && baseLimit > maxAllowed) {
@@ -998,38 +1662,74 @@ export default function App() {
 
   // Helper helper: trigger payouts or losses at the end of flight
   const resolveRoundUnsecuredBets = () => {
-    const lostAmt1 = panel1ActiveBetRef.current;
-    if (lostAmt1 !== null) {
-      const mode = panel1BetModeRef.current || (authSessionMode === 'real' ? 'real' : 'demo');
+    // Panel 1 Real
+    const lostRealAmt1 = panel1ActiveBetRef.current.real;
+    if (lostRealAmt1 !== null) {
       setMyBets(prev => [
         {
-          amount: lostAmt1,
+          amount: lostRealAmt1,
           time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           status: 'LOST',
-          mode,
+          mode: 'real',
           timestamp: Date.now()
         },
         ...prev
       ]);
-      panel1ActiveBetRef.current = null;
-      panel1BetModeRef.current = null;
+      panel1ActiveBetRef.current.real = null;
+      setRealPanel1Placed(false);
+      setRealPanel1BetVal(0);
+    }
+    // Panel 1 Demo
+    const lostDemoAmt1 = panel1ActiveBetRef.current.demo;
+    if (lostDemoAmt1 !== null) {
+      setMyBets(prev => [
+        {
+          amount: lostDemoAmt1,
+          time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          status: 'LOST',
+          mode: 'demo',
+          timestamp: Date.now()
+        },
+        ...prev
+      ]);
+      panel1ActiveBetRef.current.demo = null;
+      setDemoPanel1Placed(false);
+      setDemoPanel1BetVal(0);
     }
 
-    const lostAmt2 = panel2ActiveBetRef.current;
-    if (lostAmt2 !== null) {
-      const mode = panel2BetModeRef.current || (authSessionMode === 'real' ? 'real' : 'demo');
+    // Panel 2 Real
+    const lostRealAmt2 = panel2ActiveBetRef.current.real;
+    if (lostRealAmt2 !== null) {
       setMyBets(prev => [
         {
-          amount: lostAmt2,
+          amount: lostRealAmt2,
           time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           status: 'LOST',
-          mode,
+          mode: 'real',
           timestamp: Date.now()
         },
         ...prev
       ]);
-      panel2ActiveBetRef.current = null;
-      panel2BetModeRef.current = null;
+      panel2ActiveBetRef.current.real = null;
+      setRealPanel2Placed(false);
+      setRealPanel2BetVal(0);
+    }
+    // Panel 2 Demo
+    const lostDemoAmt2 = panel2ActiveBetRef.current.demo;
+    if (lostDemoAmt2 !== null) {
+      setMyBets(prev => [
+        {
+          amount: lostDemoAmt2,
+          time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          status: 'LOST',
+          mode: 'demo',
+          timestamp: Date.now()
+        },
+        ...prev
+      ]);
+      panel2ActiveBetRef.current.demo = null;
+      setDemoPanel2Placed(false);
+      setDemoPanel2BetVal(0);
     }
   };
 
@@ -1065,7 +1765,7 @@ export default function App() {
   // Set initial history list on mount dynamically
   useEffect(() => {
     const list: number[] = [];
-    const baseIndex = Math.floor(Date.now() / 42000);
+    const baseIndex = getGameStateAtTime(Date.now()).roundIndex;
     for (let i = 1; i <= 30; i++) {
       list.push(getRoundLimit(baseIndex - i));
     }
@@ -1078,93 +1778,39 @@ export default function App() {
         return;
       }
       const now = Date.now();
-      const elapsed = now - phaseStartTimeRef.current;
-      const limit = getCurrentRoundLimit(roundIndex);
+      const state = getGameStateAtTime(now);
+      const elapsed = now - state.phaseStartTime;
+      const limit = state.baseLimit;
 
-      // Slowly and realistically fluctuate active flight round online counter while waiting in lobby
-      if (typeof window !== 'undefined' && currentPhase === 'lobby' && Math.random() < 0.15) {
-        setOnlinePlayersCount(prev => {
-          const jitter = Math.floor(Math.random() * 5) - 2; // -2 to +2
-          const nextVal = prev + jitter;
-          const maxAllowed = Math.floor(siteOnlineCountRef.current * 0.94);
-          return Math.min(maxAllowed, Math.max(1200, nextVal));
-        });
+      // Handle round transition (e.g. round changed or first load)
+      if (state.roundIndex !== lastProcessedRoundRef.current) {
+        lastProcessedRoundRef.current = state.roundIndex;
+        setRoundIndex(state.roundIndex);
+        generateSimulatedLobbyBettors(state.roundIndex);
       }
 
-      // Determine flight duration smoothly scaled using the standard Aviator exponential scale growth duration
-      let flightDuration = limit <= 1.00 ? 0 : Math.round((Math.log(limit) / 0.0866) * 1000);
+      // Handle phase transition
+      if (state.currentPhase !== lastProcessedPhaseRef.current) {
+        lastProcessedPhaseRef.current = state.currentPhase;
+        setCurrentPhase(state.currentPhase);
 
-      const lobbyDuration = 6000; // 6 seconds lobby countdown
-      const crashedDuration = 2200; // 2.2 seconds display on crashed (no hanging!)
-
-      if (currentPhase === 'lobby') {
-        const countdownVal = parseFloat(((lobbyDuration - elapsed) / 1000).toFixed(1));
-        if (countdownVal > 0) {
-          setCountdownValue(countdownVal);
-          // General room counter now fluctuates organically on tick
+        if (state.currentPhase === 'lobby') {
+          setCountdownValue(6.0);
           setCrashActive(false);
           setCrashMultiplier(1.00);
           setCrashStatusMessage("Lobby Loaded");
           setRoundCrashLimit(limit);
-        } else {
-          // Transition to flight!
+          transitionNextRoundBets();
+        } else if (state.currentPhase === 'flight') {
           setCrashActive(true);
           setCountdownValue(null);
           setRoundCrashLimit(limit);
-          setStartingPlayers(onlinePlayersCount); // Lock the current lobby count as starting point
+          setStartingPlayers(onlinePlayersCount);
           bothBetsPlacedInRoundRef.current = (panel1ActiveBetRef.current !== null && panel2ActiveBetRef.current !== null);
-          setCurrentPhase('flight');
-        }
-      } else if (currentPhase === 'flight') {
-        if (elapsed < flightDuration) {
-          const tSec = elapsed / 1000;
-          let currentScale = Math.exp(0.0866 * tSec);
-          if (currentScale > limit) {
-            currentScale = limit;
+          if (currentView === 'aviator') {
+            audioEngine.playFlightStart();
           }
-          currentScale = parseFloat(currentScale.toFixed(2));
-          setCrashMultiplier(prev => Math.max(prev, currentScale));
-
-          // Update active players' cashout status based on thresholds
-          setActivePlayers(prev => {
-            return prev.map(player => {
-              if (!player.cashedOut) {
-                const th = (player as any).cashoutThreshold || 1.8;
-                const willCO = (player as any).willCashOut !== false;
-                if (willCO && currentScale >= th) {
-                  return {
-                    ...player,
-                    cashedOut: true,
-                    multiplier: th,
-                    payoutAmount: parseFloat((player.betAmount * th).toFixed(1))
-                  };
-                }
-              }
-              return player;
-            });
-          });
-
-          // Decline online survivors count smoothly and strictly based on the scale range
-          let remainingFraction = 1.0;
-          if (currentScale <= 1.99) {
-            const scaleFraction = Math.max(0, Math.min(1, (currentScale - 1.0) / 0.99));
-            // Declines slowly and organically by around 12% total in this initial range (from 100% to 88%)
-            remainingFraction = 1.0 - (scaleFraction * 0.12) + (Math.sin(currentScale * 12) * 0.003);
-          } else {
-            // Above 1.99x, it declines steadily and faster as players cash out at high limits
-            const scaleFraction = Math.max(0, Math.min(1, (currentScale - 1.99) / (limit - 1.99 || 1.0)));
-            const floorFrac = 0.035;
-            remainingFraction = 0.88 - Math.pow(scaleFraction, 1.6) * (0.88 - floorFrac) + (Math.sin(currentScale * 4) * 0.002);
-          }
-          // Clamp and compute physical counter values
-          remainingFraction = Math.max(0.03, Math.min(1.0, remainingFraction));
-          const calculatedCount = Math.max(
-            finalMinPlayers,
-            Math.round(startingPlayers * remainingFraction)
-          );
-          setOnlinePlayersCount(calculatedCount);
-        } else {
-          // Transition to crashed!
+        } else if (state.currentPhase === 'crashed') {
           if (currentView === 'aviator') {
             audioEngine.playCrash();
           } else {
@@ -1175,67 +1821,79 @@ export default function App() {
           setCrashMultiplier(limit);
           setCrashStatusMessage(`FLEW AWAY! at ${limit.toFixed(2)}x`);
           resolveRoundUnsecuredBets();
-          // General room counter is preserved realistically during crash instead of forced to zero
           
-          // Append actual result to history ribbon list
           setHistoryList(prev => {
-            if (prev.includes(limit)) return prev; // Avoid duplicating if already added
+            if (prev.includes(limit)) return prev;
             const nextList = [limit, ...prev];
             return nextList.slice(0, 30);
           });
-
-          setCurrentPhase('crashed');
         }
-      } else if (currentPhase === 'crashed') {
-        if (elapsed >= crashedDuration) {
-          // Transition to next round immediately after display!
-          if (panel1NextRoundBetRef.current !== null) {
-            panel1ActiveBetRef.current = panel1NextRoundBetRef.current;
-            panel1BetModeRef.current = panel1NextRoundBetModeRef.current;
-            panel1NextRoundBetRef.current = null;
-            panel1NextRoundBetModeRef.current = null;
-            setPanel1Placed(true);
-            setPanel1Cashed(false);
-            setPanel1BetVal(panel1ActiveBetRef.current);
-          } else {
-            setPanel1Placed(false);
-            setPanel1Cashed(false);
-            setPanel1BetVal(0);
-          }
-          setPanel1NextPlaced(false);
-          setPanel1NextBetVal(0);
+      }
 
-          if (panel2NextRoundBetRef.current !== null) {
-            panel2ActiveBetRef.current = panel2NextRoundBetRef.current;
-            panel2BetModeRef.current = panel2NextRoundBetModeRef.current;
-            panel2NextRoundBetRef.current = null;
-            panel2NextRoundBetModeRef.current = null;
-            setPanel2Placed(true);
-            setPanel2Cashed(false);
-            setPanel2BetVal(panel2ActiveBetRef.current);
-          } else {
-            setPanel2Placed(false);
-            setPanel2Cashed(false);
-            setPanel2BetVal(0);
-          }
-          setPanel2NextPlaced(false);
-          setPanel2NextBetVal(0);
+      // Continuous ticks inside each phase
+      if (state.currentPhase === 'lobby') {
+        const lobbyDuration = 6000;
+        const countdownVal = parseFloat(((lobbyDuration - elapsed) / 1000).toFixed(1));
+        setCountdownValue(Math.max(0, countdownVal));
 
-          bothBetsPlacedInRoundRef.current = false;
-          setRoundIndex(prev => {
-            const nextLobbyCount = Math.min(2650, Math.max(1200, Math.floor(siteOnlineCountRef.current * (0.84 + Math.random() * 0.08))));
-            setOnlinePlayersCount(nextLobbyCount);
-            setStartingPlayers(nextLobbyCount);
-            return prev + 1;
+        if (Math.random() < 0.15) {
+          setOnlinePlayersCount(prev => {
+            const jitter = Math.floor(Math.random() * 5) - 2;
+            const nextVal = prev + jitter;
+            const maxAllowed = Math.floor(siteOnlineCountRef.current * 0.94);
+            return Math.min(maxAllowed, Math.max(1200, nextVal));
           });
-          setCurrentPhase('lobby');
         }
+      } else if (state.currentPhase === 'flight') {
+        const tSec = elapsed / 1000;
+        let currentScale = Math.exp(0.0866 * tSec);
+        if (currentScale > limit) {
+          currentScale = limit;
+        }
+        currentScale = parseFloat(currentScale.toFixed(2));
+        setCrashMultiplier(prev => Math.max(prev, currentScale));
+
+        // Update active players' cashout status based on thresholds
+        setActivePlayers(prev => {
+          return prev.map(player => {
+            if (!player.cashedOut) {
+              const th = (player as any).cashoutThreshold || 1.8;
+              const willCO = (player as any).willCashOut !== false;
+              if (willCO && currentScale >= th) {
+                return {
+                  ...player,
+                  cashedOut: true,
+                  multiplier: th,
+                  payoutAmount: parseFloat((player.betAmount * th).toFixed(1))
+                };
+              }
+            }
+            return player;
+          });
+        });
+
+        // Decline online survivors count smoothly and strictly based on the scale range
+        let remainingFraction = 1.0;
+        if (currentScale <= 1.99) {
+          const scaleFraction = Math.max(0, Math.min(1, (currentScale - 1.0) / 0.99));
+          remainingFraction = 1.0 - (scaleFraction * 0.12) + (Math.sin(currentScale * 12) * 0.003);
+        } else {
+          const scaleFraction = Math.max(0, Math.min(1, (currentScale - 1.99) / (limit - 1.99 || 1.0)));
+          const floorFrac = 0.035;
+          remainingFraction = 0.88 - Math.pow(scaleFraction, 1.6) * (0.88 - floorFrac) + (Math.sin(currentScale * 4) * 0.002);
+        }
+        remainingFraction = Math.max(0.03, Math.min(1.0, remainingFraction));
+        const calculatedCount = Math.max(
+          finalMinPlayers,
+          Math.round(startingPlayers * remainingFraction)
+        );
+        setOnlinePlayersCount(calculatedCount);
       }
     };
 
     const interval = setInterval(handleGameLoopTick, 50);
     return () => clearInterval(interval);
-  }, [currentPhase, roundIndex, startingPlayers, finalMinPlayers]);
+  }, [currentView, socketConnected, startingPlayers, finalMinPlayers, onlinePlayersCount]);
 
   // Dual Panel handlers
   const handleBetPlaced = (panelId: string, amount: number): boolean => {
@@ -1247,21 +1905,33 @@ export default function App() {
         'general'
       );
       if (panelId === 'panel1') {
-        setPanel1Placed(false);
-        setPanel1Cashed(false);
-        setPanel1BetVal(0);
-        panel1ActiveBetRef.current = null;
-        panel1NextRoundBetRef.current = null;
-        panel1BetModeRef.current = null;
-        panel1NextRoundBetModeRef.current = null;
+        if (authSessionMode === 'real') {
+          setRealPanel1Placed(false);
+          setRealPanel1Cashed(false);
+          setRealPanel1BetVal(0);
+          panel1ActiveBetRef.current.real = null;
+          panel1NextRoundBetRef.current.real = null;
+        } else {
+          setDemoPanel1Placed(false);
+          setDemoPanel1Cashed(false);
+          setDemoPanel1BetVal(0);
+          panel1ActiveBetRef.current.demo = null;
+          panel1NextRoundBetRef.current.demo = null;
+        }
       } else {
-        setPanel2Placed(false);
-        setPanel2Cashed(false);
-        setPanel2BetVal(0);
-        panel2ActiveBetRef.current = null;
-        panel2NextRoundBetRef.current = null;
-        panel2BetModeRef.current = null;
-        panel2NextRoundBetModeRef.current = null;
+        if (authSessionMode === 'real') {
+          setRealPanel2Placed(false);
+          setRealPanel2Cashed(false);
+          setRealPanel2BetVal(0);
+          panel2ActiveBetRef.current.real = null;
+          panel2NextRoundBetRef.current.real = null;
+        } else {
+          setDemoPanel2Placed(false);
+          setDemoPanel2Cashed(false);
+          setDemoPanel2BetVal(0);
+          panel2ActiveBetRef.current.demo = null;
+          panel2NextRoundBetRef.current.demo = null;
+        }
       }
       return false;
     }
@@ -1275,29 +1945,47 @@ export default function App() {
 
     if (panelId === 'panel1') {
       if (isNextRound) {
-        panel1NextRoundBetRef.current = amount;
-        panel1NextRoundBetModeRef.current = activeMode;
-        setPanel1NextPlaced(true);
-        setPanel1NextBetVal(amount);
+        panel1NextRoundBetRef.current[activeMode] = amount;
+        if (activeMode === 'real') {
+          setRealPanel1NextPlaced(true);
+          setRealPanel1NextBetVal(amount);
+        } else {
+          setDemoPanel1NextPlaced(true);
+          setDemoPanel1NextBetVal(amount);
+        }
       } else {
-        setPanel1Placed(true);
-        setPanel1Cashed(false);
-        setPanel1BetVal(amount);
-        panel1ActiveBetRef.current = amount;
-        panel1BetModeRef.current = activeMode;
+        panel1ActiveBetRef.current[activeMode] = amount;
+        if (activeMode === 'real') {
+          setRealPanel1Placed(true);
+          setRealPanel1Cashed(false);
+          setRealPanel1BetVal(amount);
+        } else {
+          setDemoPanel1Placed(true);
+          setDemoPanel1Cashed(false);
+          setDemoPanel1BetVal(amount);
+        }
       }
     } else {
       if (isNextRound) {
-        panel2NextRoundBetRef.current = amount;
-        panel2NextRoundBetModeRef.current = activeMode;
-        setPanel2NextPlaced(true);
-        setPanel2NextBetVal(amount);
+        panel2NextRoundBetRef.current[activeMode] = amount;
+        if (activeMode === 'real') {
+          setRealPanel2NextPlaced(true);
+          setRealPanel2NextBetVal(amount);
+        } else {
+          setDemoPanel2NextPlaced(true);
+          setDemoPanel2NextBetVal(amount);
+        }
       } else {
-        setPanel2Placed(true);
-        setPanel2Cashed(false);
-        setPanel2BetVal(amount);
-        panel2ActiveBetRef.current = amount;
-        panel2BetModeRef.current = activeMode;
+        panel2ActiveBetRef.current[activeMode] = amount;
+        if (activeMode === 'real') {
+          setRealPanel2Placed(true);
+          setRealPanel2Cashed(false);
+          setRealPanel2BetVal(amount);
+        } else {
+          setDemoPanel2Placed(true);
+          setDemoPanel2Cashed(false);
+          setDemoPanel2BetVal(amount);
+        }
       }
     }
 
@@ -1319,30 +2007,47 @@ export default function App() {
     setBalance(prev => parseFloat((prev + amount).toFixed(2)));
 
     const isNextRound = currentPhase === 'flight' || currentPhase === 'crashed';
+    const activeMode = authSessionMode === 'real' ? 'real' : 'demo';
 
     if (panelId === 'panel1') {
       if (isNextRound) {
-        setPanel1NextBetVal(0);
-        setPanel1NextPlaced(false);
-        panel1NextRoundBetRef.current = null;
-        panel1NextRoundBetModeRef.current = null;
+        panel1NextRoundBetRef.current[activeMode] = null;
+        if (activeMode === 'real') {
+          setRealPanel1NextBetVal(0);
+          setRealPanel1NextPlaced(false);
+        } else {
+          setDemoPanel1NextBetVal(0);
+          setDemoPanel1NextPlaced(false);
+        }
       } else {
-        setPanel1BetVal(0);
-        setPanel1Placed(false);
-        panel1ActiveBetRef.current = null;
-        panel1BetModeRef.current = null;
+        panel1ActiveBetRef.current[activeMode] = null;
+        if (activeMode === 'real') {
+          setRealPanel1BetVal(0);
+          setRealPanel1Placed(false);
+        } else {
+          setDemoPanel1BetVal(0);
+          setDemoPanel1Placed(false);
+        }
       }
     } else {
       if (isNextRound) {
-        setPanel2NextBetVal(0);
-        setPanel2NextPlaced(false);
-        panel2NextRoundBetRef.current = null;
-        panel2NextRoundBetModeRef.current = null;
+        panel2NextRoundBetRef.current[activeMode] = null;
+        if (activeMode === 'real') {
+          setRealPanel2NextBetVal(0);
+          setRealPanel2NextPlaced(false);
+        } else {
+          setDemoPanel2NextBetVal(0);
+          setDemoPanel2NextPlaced(false);
+        }
       } else {
-        setPanel2BetVal(0);
-        setPanel2Placed(false);
-        panel2ActiveBetRef.current = null;
-        panel2BetModeRef.current = null;
+        panel2ActiveBetRef.current[activeMode] = null;
+        if (activeMode === 'real') {
+          setRealPanel2BetVal(0);
+          setRealPanel2Placed(false);
+        } else {
+          setDemoPanel2BetVal(0);
+          setDemoPanel2Placed(false);
+        }
       }
     }
 
@@ -1363,19 +2068,28 @@ export default function App() {
     // Deposit cashout rewards immediately
     setBalance(prev => parseFloat((prev + cashPayout).toFixed(2)));
 
+    const activeMode = authSessionMode === 'real' ? 'real' : 'demo';
+
     if (panelId === 'panel1') {
-      setPanel1Cashed(true);
-      panel1ActiveBetRef.current = null;
+      panel1ActiveBetRef.current[activeMode] = null;
+      if (activeMode === 'real') {
+        setRealPanel1Cashed(true);
+      } else {
+        setDemoPanel1Cashed(true);
+      }
     } else {
-      setPanel2Cashed(true);
-      panel2ActiveBetRef.current = null;
+      panel2ActiveBetRef.current[activeMode] = null;
+      if (activeMode === 'real') {
+        setRealPanel2Cashed(true);
+      } else {
+        setDemoPanel2Cashed(true);
+      }
     }
 
     // Add personal wins to ledger
-    const betVal = panelId === 'panel1' ? panel1BetVal : panel2BetVal;
-    const mode = panelId === 'panel1' 
-      ? (panel1BetModeRef.current || (authSessionMode === 'real' ? 'real' : 'demo'))
-      : (panel2BetModeRef.current || (authSessionMode === 'real' ? 'real' : 'demo'));
+    const betVal = panelId === 'panel1'
+      ? (activeMode === 'real' ? realPanel1BetVal : demoPanel1BetVal)
+      : (activeMode === 'real' ? realPanel2BetVal : demoPanel2BetVal);
 
     setMyBets(prev => [
       {
@@ -1384,18 +2098,11 @@ export default function App() {
         payout: cashPayout,
         time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         status: 'WON',
-        mode,
+        mode: activeMode,
         timestamp: Date.now()
       },
       ...prev
     ]);
-
-    // Clear bet mode refs
-    if (panelId === 'panel1') {
-      panel1BetModeRef.current = null;
-    } else {
-      panel2BetModeRef.current = null;
-    }
 
     // Trigger Big Win Celebration Overlay if multiplier >= 5.0x!
     if (finalMult >= 5.0 && !bothBetsPlacedInRoundRef.current) {
@@ -1474,38 +2181,7 @@ export default function App() {
               setCrashStatusMessage("Lobby Loaded");
               setActivePlayers(msg.activePlayers || []);
               
-              if (panel1NextRoundBetRef.current !== null) {
-                panel1ActiveBetRef.current = panel1NextRoundBetRef.current;
-                panel1BetModeRef.current = panel1NextRoundBetModeRef.current;
-                panel1NextRoundBetRef.current = null;
-                panel1NextRoundBetModeRef.current = null;
-                setPanel1Placed(true);
-                setPanel1Cashed(false);
-                setPanel1BetVal(panel1ActiveBetRef.current);
-              } else {
-                setPanel1Placed(false);
-                setPanel1Cashed(false);
-                setPanel1BetVal(0);
-              }
-              setPanel1NextPlaced(false);
-              setPanel1NextBetVal(0);
-
-              if (panel2NextRoundBetRef.current !== null) {
-                panel2ActiveBetRef.current = panel2NextRoundBetRef.current;
-                panel2BetModeRef.current = panel2NextRoundBetModeRef.current;
-                panel2NextRoundBetRef.current = null;
-                panel2NextRoundBetModeRef.current = null;
-                setPanel2Placed(true);
-                setPanel2Cashed(false);
-                setPanel2BetVal(panel2ActiveBetRef.current);
-              } else {
-                setPanel2Placed(false);
-                setPanel2Cashed(false);
-                setPanel2BetVal(0);
-              }
-              setPanel2NextPlaced(false);
-              setPanel2NextBetVal(0);
-              bothBetsPlacedInRoundRef.current = false;
+              transitionNextRoundBets();
             } else if (nextPhase === 'flight') {
               setCrashActive(true);
               setCountdownValue(null);
@@ -1527,34 +2203,7 @@ export default function App() {
               setCrashStatusMessage(`FLEW AWAY! at ${msg.limit.toFixed(2)}x`);
               setHistoryList(msg.historyList || []);
 
-              const lost1 = panel1ActiveBetRef.current;
-              if (lost1 !== null) {
-                const mode = panel1BetModeRef.current || (authSessionMode === 'real' ? 'real' : 'demo');
-                setMyBetsState(prev => [{
-                  amount: lost1,
-                  time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-                  status: 'LOST',
-                  mode,
-                  timestamp: Date.now()
-                }, ...prev]);
-                panel1ActiveBetRef.current = null;
-                panel1BetModeRef.current = null;
-                setPanel1Placed(false);
-              }
-              const lost2 = panel2ActiveBetRef.current;
-              if (lost2 !== null) {
-                const mode = panel2BetModeRef.current || (authSessionMode === 'real' ? 'real' : 'demo');
-                setMyBetsState(prev => [{
-                  amount: lost2,
-                  time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-                  status: 'LOST',
-                  mode,
-                  timestamp: Date.now()
-                }, ...prev]);
-                panel2ActiveBetRef.current = null;
-                panel2BetModeRef.current = null;
-                setPanel2Placed(false);
-              }
+              resolveRoundUnsecuredBets();
             }
           } else if (msg.type === 'LOBBY_BET_UPDATE') {
             setActivePlayers(msg.activePlayers || []);
@@ -1565,6 +2214,9 @@ export default function App() {
             handleCashOut(panelId, multiplier, payoutAmount);
           } else if (msg.type === 'CHAT_BROADCAST') {
             const receivedMsg = msg.message;
+            if (receivedMsg && typeof receivedMsg.text === 'string' && receivedMsg.text) {
+              receivedMsg.text = receivedMsg.text.charAt(0).toLowerCase() + receivedMsg.text.slice(1);
+            }
             setChatMessages(prev => {
               if (prev.some(m => m.id === receivedMsg.id)) return prev;
               const updated = [...prev, receivedMsg];
@@ -1876,10 +2528,10 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen md:h-screen w-screen bg-[#0d0e10] text-gray-100 flex flex-col justify-start items-stretch p-0 relative antialiased overflow-y-auto md:overflow-hidden">
+    <div className="h-screen max-h-screen w-screen bg-[#0d0e10] text-gray-100 flex flex-col justify-start items-stretch p-0 relative antialiased overflow-hidden">
       
       {/* Central Screen Frame */}
-      <div className="w-full md:h-full bg-[#0d0e10] flex flex-col shadow-none shrink-0 md:shrink md:flex-1 overflow-y-auto md:overflow-hidden">
+      <div className="w-full h-full bg-[#0d0e10] flex flex-col shadow-none shrink-0 flex-1 overflow-hidden">
         
         {/* STICKY TOP DASHBOARD WRAPPER: Matches Mobile & Laptop Full-Page layout */}
         <div className="sticky top-0 z-40 bg-[#141518] flex flex-col shrink-0 border-b border-[#212327]/50 shadow-md">
@@ -1955,6 +2607,15 @@ export default function App() {
                 <span>🎰</span>
                 <span className="uppercase">Casino Lobby</span>
               </button>
+              {currentView === 'aviator' && (
+                <button
+                  onClick={() => setShowMobileBets(!showMobileBets)}
+                  className={`md:hidden px-3 py-1.5 rounded transition-all flex items-center gap-1 cursor-pointer font-bold ${showMobileBets ? 'bg-amber-600 text-white shadow-[0_0_10px_rgba(217,119,6,0.3)]' : 'bg-black/15 text-[#9b9da4] hover:text-[#d1d2d6]'}`}
+                >
+                  <span>📊</span>
+                  <span className="uppercase">Ledger {showMobileBets ? 'ON' : 'OFF'}</span>
+                </button>
+              )}
             </div>
 
             <div className="flex items-center gap-1.5 shrink-0">
@@ -1989,9 +2650,23 @@ export default function App() {
         </div>
 
         {currentView === 'aviator' && (
-          <div className="flex-1 flex flex-col md:flex-row min-h-fit md:min-h-0 bg-[#0d0e10] md:overflow-hidden">
+          <div className="flex-1 flex flex-col md:flex-row min-h-0 bg-[#0d0e10] overflow-hidden relative">
             {/* LEFT SIDEBAR: Multiplayer lobby statistics & lounge chats */}
-            <div className="w-full md:w-[280px] lg:w-[320px] xl:w-[360px] shrink-0 border-r border-[#212327]/30 bg-[#0d0e10] flex flex-col overflow-y-auto md:overflow-hidden order-2 md:order-1 h-auto md:h-full md:p-3 pb-3 md:pb-3">
+            <div className={`
+              ${showMobileBets ? 'flex fixed inset-x-0 bottom-0 top-[110px] z-40 p-4 bg-black/95 border-t border-purple-500/20 animate-fadeIn' : 'hidden'} 
+              md:relative md:flex md:inset-auto md:z-0 md:p-3
+              w-full md:w-[280px] lg:w-[320px] xl:w-[360px] shrink-0 border-r border-[#212327]/30 bg-[#0d0e10] flex-col overflow-hidden order-2 md:order-1 h-auto md:h-full
+            `}>
+              {/* Close header for mobile ledger overlay */}
+              <div className="flex md:hidden items-center justify-between pb-2 mb-2 border-b border-purple-900/30 shrink-0">
+                <span className="text-[10px] uppercase font-black text-amber-400 font-mono">Live Multiplayer Ledger</span>
+                <button 
+                  onClick={() => setShowMobileBets(false)}
+                  className="px-2.5 py-1 text-[9px] uppercase font-black bg-red-600 hover:bg-red-700 text-white rounded cursor-pointer"
+                >
+                  ✕ Close Ledger
+                </button>
+              </div>
               <BetsLedger 
                 myBets={myBets.filter(bet => (bet.mode || 'demo') === (authSessionMode === 'real' ? 'real' : 'demo'))}
                 activePlayers={activePlayers}
@@ -2009,7 +2684,7 @@ export default function App() {
             </div>
 
             {/* RIGHT MAIN STATION: Multiplier Ribbon, cockpit canvas and twin-bet consoles */}
-            <div className="flex-1 flex flex-col order-1 md:order-2 h-auto md:h-full md:overflow-hidden bg-[#0d0e10]">
+            <div className="flex-1 flex flex-col order-1 md:order-2 h-full overflow-hidden bg-[#0d0e10]">
               {/* RECENT HISTORIC MULTIPLIERS STRIP */}
               <HistoryRibbon 
                 multipliers={historyList}
@@ -2083,7 +2758,7 @@ export default function App() {
         )}
 
         {currentView === 'lobby' && (
-          <div className="flex-1 overflow-y-auto p-4 bg-[#0d0e10] text-[#eaeaea] scrollbar-thin scrollbar-thumb-purple-900/30 font-sans">
+          <div className="flex-1 overflow-hidden p-3 bg-[#0d0e10] text-[#eaeaea] font-sans flex flex-col min-h-0">
             <CasinoGames 
               wallet={wallet}
               setWallet={setWallet}

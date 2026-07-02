@@ -132,10 +132,96 @@ async function startServer() {
   // Initialize unified WebSockets server on the same port
   const wss = new WebSocketServer({ server });
 
+  // Compute deterministic round limit based on round index only to be identical on all devices
+  function getRoundLimit(roundIdx: number): number {
+    let h = Math.abs(Math.sin(roundIdx) * 10000);
+    h = h - Math.floor(h);
+
+    // 0.5% chance of a high gold round (200x to 1000x)
+    if (h > 0.995) {
+      const p = (h - 0.995) / 0.005;
+      return parseFloat((100.00 + p * 900.00).toFixed(2));
+    }
+
+    // Highly authentic Aviator model: over 55% of rounds crash under 2.00x (1.00 - 1.99)
+    if (h < 0.11) {
+      // 11% of rounds crash immediately at 1.00x
+      return 1.00;
+    } else if (h < 0.55) {
+      // 44% of rounds crash between 1.01x and 1.99x
+      const p = (h - 0.11) / 0.44;
+      return parseFloat((1.01 + p * 0.98).toFixed(2));
+    } else if (h < 0.80) {
+      // 25% of rounds crash between 2.00x and 10.00x
+      const p = (h - 0.55) / 0.25;
+      return parseFloat((2.00 + p * 8.00).toFixed(2));
+    } else if (h < 0.95) {
+      // 15% of rounds between 10.01x and 30.00x
+      const p = (h - 0.80) / 0.15;
+      return parseFloat((10.01 + p * 19.99).toFixed(2));
+    } else {
+      // Rare hits between 30.01x and 100.00x
+      const p = (h - 0.95) / 0.045; // 0.95 to 0.995 is 0.045
+      return parseFloat((30.01 + p * 69.99).toFixed(2));
+    }
+  }
+
+  // Deterministic game state timeline calculations synced to the millisecond of the system clock
+  function getGameStateAtTime(now: number) {
+    const dayMs = 86400000;
+    const startOfDay = now - (now % dayMs);
+    
+    const dayIndex = Math.floor(startOfDay / dayMs);
+    let roundIdx = dayIndex * 10000;
+    
+    let tempTime = startOfDay;
+    const lobbyDur = 6000;
+    const crashedDur = 2200;
+
+    let currPhase: 'lobby' | 'flight' | 'crashed' = 'lobby';
+    let phaseStart = tempTime;
+    let baseLimit = 1.00;
+    let baseFlightDuration = 0;
+
+    while (true) {
+      baseLimit = getRoundLimit(roundIdx);
+      baseFlightDuration = baseLimit <= 1.00 ? 0 : Math.round((Math.log(baseLimit) / 0.0866) * 1000);
+      const roundDuration = lobbyDur + baseFlightDuration + crashedDur;
+
+      if (tempTime + roundDuration > now) {
+        const elapsedInRound = now - tempTime;
+        
+        if (elapsedInRound < lobbyDur) {
+          currPhase = 'lobby';
+          phaseStart = tempTime;
+        } else if (elapsedInRound < lobbyDur + baseFlightDuration) {
+          currPhase = 'flight';
+          phaseStart = tempTime + lobbyDur;
+        } else {
+          currPhase = 'crashed';
+          phaseStart = tempTime + lobbyDur + baseFlightDuration;
+        }
+        break;
+      }
+
+      tempTime += roundDuration;
+      roundIdx++;
+    }
+
+    return {
+      roundIndex: roundIdx,
+      currentPhase: currPhase,
+      phaseStartTime: phaseStart,
+      baseLimit,
+      baseFlightDuration,
+      roundStartTime: tempTime
+    };
+  }
+
   // Game Engine Synchronization State Variables
   let currentPhase: 'lobby' | 'flight' | 'crashed' = 'lobby';
   let phaseStartTime = Date.now();
-  let roundIndex = Math.floor(Date.now() / 30000) % 100000;
+  let roundIndex = getGameStateAtTime(Date.now()).roundIndex;
   let limit = 1.85;
   let flightDuration = 5000;
   let currentMultiplier = 1.00;
@@ -147,41 +233,6 @@ async function startServer() {
   let finalMinPlayers = 80;
 
   const socketMap = new Map<string, WebSocket>();
-
-  function generateCrashLimit(activeRealBets: any[] = []): number {
-    const h = Math.random();
-    let baseLimit = 1.00;
-    
-    if (h < 0.11) {
-      baseLimit = 1.00;
-    } else if (h < 0.55) {
-      baseLimit = parseFloat((1.01 + Math.random() * 0.98).toFixed(2));
-    } else if (h < 0.95) {
-      baseLimit = parseFloat((2.00 + Math.random() * 13.00).toFixed(2));
-    } else if (h < 0.99) {
-      baseLimit = parseFloat((15.00 + Math.random() * 85.00).toFixed(2));
-    } else {
-      baseLimit = parseFloat((100.00 + Math.random() * 900.00).toFixed(2));
-    }
-
-    // Adjust limit dynamically based on active REAL bets if any exist (safety thresholding)
-    let maxAllowed = Infinity;
-    for (const bet of activeRealBets) {
-      if (bet.mode === 'real') {
-        const amount = bet.betAmount;
-        if (amount === 10) maxAllowed = Math.min(maxAllowed, 5.0);
-        else if (amount === 20) maxAllowed = Math.min(maxAllowed, 4.0);
-        else if (amount === 30) maxAllowed = Math.min(maxAllowed, 3.0);
-        else if (amount === 40) maxAllowed = Math.min(maxAllowed, 2.0);
-        else if (amount >= 50) maxAllowed = Math.min(maxAllowed, 2.0);
-      }
-    }
-
-    if (maxAllowed !== Infinity && baseLimit > maxAllowed) {
-      return parseFloat(Math.min(baseLimit, maxAllowed).toFixed(2));
-    }
-    return baseLimit;
-  }
 
   function getFlightDuration(clLimit: number): number {
     if (clLimit <= 1.00) return 0;
@@ -283,18 +334,30 @@ async function startServer() {
   // Global Engine Tick interval scheduler
   setInterval(() => {
     const now = Date.now();
-    const elapsed = now - phaseStartTime;
+    const state = getGameStateAtTime(now);
+    const elapsed = now - state.phaseStartTime;
+    const currentLimit = state.baseLimit;
 
-    if (currentPhase === 'lobby') {
-      if (elapsed >= lobbyDuration) {
-        // Transition to flight phase
-        currentPhase = 'flight';
-        phaseStartTime = Date.now();
-        const realBets = activePlayers.filter(p => !p.id.startsWith('sim_'));
-        limit = generateCrashLimit(realBets);
-        flightDuration = getFlightDuration(limit);
+    // Detect phase transitions on the server too
+    if (state.currentPhase !== currentPhase || state.roundIndex !== roundIndex) {
+      currentPhase = state.currentPhase;
+      roundIndex = state.roundIndex;
+      limit = currentLimit;
+      flightDuration = state.baseFlightDuration;
+      phaseStartTime = state.phaseStartTime;
+
+      if (currentPhase === 'lobby') {
+        resetActivePlayersForRound();
+        broadcast({
+          type: 'PHASE_CHANGE',
+          phase: 'lobby',
+          roundIndex,
+          activePlayers,
+          onlinePlayersCount,
+          phaseStartTime
+        });
+      } else if (currentPhase === 'flight') {
         currentMultiplier = 1.00;
-
         // Recalculate simulated player auto-cashout targets based on the determined flight limit
         activePlayers.forEach(p => {
           if (p.id.startsWith('sim_')) {
@@ -320,90 +383,7 @@ async function startServer() {
           activePlayers,
           roundIndex
         });
-      } else {
-        // Soft room jitter
-        if (Math.random() < 0.15) {
-          onlinePlayersCount = Math.min(
-            Math.floor(siteOnlineCount * 0.94),
-            Math.max(1200, onlinePlayersCount + (Math.floor(Math.random() * 5) - 2))
-          );
-        }
-        broadcast({
-          type: 'LOBBY_TICK',
-          countdownValue: parseFloat(((lobbyDuration - elapsed) / 1000).toFixed(1)),
-          onlinePlayersCount,
-          siteOnlineCount
-        });
-      }
-    } else if (currentPhase === 'flight') {
-      if (elapsed < flightDuration) {
-        const tSec = elapsed / 1000;
-        let nextScale = Math.exp(0.0866 * tSec);
-        if (nextScale > limit) {
-          nextScale = limit;
-        }
-        currentMultiplier = parseFloat(nextScale.toFixed(2));
-
-        // Evaluate automated auto cash-outs for both real & simulated Bettors
-        activePlayers.forEach(p => {
-          if (!p.cashedOut) {
-            const isSim = p.id.startsWith('sim_');
-            if (isSim) {
-              if (p.willCashOut && currentMultiplier >= p.cashoutThreshold) {
-                p.cashedOut = true;
-                p.multiplier = p.cashoutThreshold;
-                p.payoutAmount = parseFloat((p.betAmount * p.cashoutThreshold).toFixed(1));
-              }
-            } else {
-              if (p.autoCashoutThreshold && currentMultiplier >= p.autoCashoutThreshold) {
-                p.cashedOut = true;
-                p.multiplier = p.autoCashoutThreshold;
-                p.payoutAmount = parseFloat((p.betAmount * p.autoCashoutThreshold).toFixed(2));
-
-                if (p.socketId) {
-                  const wsTarget = socketMap.get(p.socketId);
-                  if (wsTarget && wsTarget.readyState === 1) {
-                    wsTarget.send(JSON.stringify({
-                      type: 'AUTO_CASHOUT_SUCCESS',
-                      multiplier: p.autoCashoutThreshold,
-                      payoutAmount: p.payoutAmount,
-                      panelId: p.panelId
-                    }));
-                  }
-                }
-              }
-            }
-          }
-        });
-
-        // Compute remaining multiplier online count curves
-        let remainingFraction = 1.0;
-        if (currentMultiplier <= 1.99) {
-          const scaleFraction = Math.max(0, Math.min(1, (currentMultiplier - 1.0) / 0.99));
-          remainingFraction = 1.0 - (scaleFraction * 0.12) + (Math.sin(currentMultiplier * 12) * 0.003);
-        } else {
-          const scaleFraction = Math.max(0, Math.min(1, (currentMultiplier - 1.99) / (limit - 1.99 || 1.0)));
-          const floorFrac = 0.035;
-          remainingFraction = 0.88 - Math.pow(scaleFraction, 1.6) * (0.88 - floorFrac) + (Math.sin(currentMultiplier * 4) * 0.002);
-        }
-        remainingFraction = Math.max(0.03, Math.min(1.0, remainingFraction));
-        onlinePlayersCount = Math.max(
-          finalMinPlayers,
-          Math.round(startingPlayers * remainingFraction)
-        );
-
-        broadcast({
-          type: 'MULTIPLIER_TICK',
-          multiplier: currentMultiplier,
-          elapsed,
-          activePlayers,
-          onlinePlayersCount
-        });
-      } else {
-        // Transition to Crashed phase
-        currentPhase = 'crashed';
-        phaseStartTime = Date.now();
-
+      } else if (currentPhase === 'crashed') {
         if (!historyList.includes(limit)) {
           historyList = [limit, ...historyList].slice(0, 30);
         }
@@ -415,22 +395,85 @@ async function startServer() {
           historyList
         });
       }
-    } else if (currentPhase === 'crashed') {
-      if (elapsed >= crashedDuration) {
-        // Next Round Transition
-        currentPhase = 'lobby';
-        phaseStartTime = Date.now();
-        roundIndex += 1;
-        resetActivePlayersForRound();
-        broadcast({
-          type: 'PHASE_CHANGE',
-          phase: 'lobby',
-          roundIndex,
-          activePlayers,
-          onlinePlayersCount,
-          phaseStartTime
-        });
+    }
+
+    // Tick-level updates
+    if (currentPhase === 'lobby') {
+      if (Math.random() < 0.15) {
+        onlinePlayersCount = Math.min(
+          Math.floor(siteOnlineCount * 0.94),
+          Math.max(1200, onlinePlayersCount + (Math.floor(Math.random() * 5) - 2))
+        );
       }
+      broadcast({
+        type: 'LOBBY_TICK',
+        countdownValue: parseFloat(((6000 - elapsed) / 1000).toFixed(1)),
+        onlinePlayersCount,
+        siteOnlineCount
+      });
+    } else if (currentPhase === 'flight') {
+      const tSec = elapsed / 1000;
+      let nextScale = Math.exp(0.0866 * tSec);
+      if (nextScale > limit) {
+        nextScale = limit;
+      }
+      currentMultiplier = parseFloat(nextScale.toFixed(2));
+
+      // Evaluate automated auto cash-outs for both real & simulated Bettors
+      activePlayers.forEach(p => {
+        if (!p.cashedOut) {
+          const isSim = p.id.startsWith('sim_');
+          if (isSim) {
+            if (p.willCashOut && currentMultiplier >= p.cashoutThreshold) {
+              p.cashedOut = true;
+              p.multiplier = p.cashoutThreshold;
+              p.payoutAmount = parseFloat((p.betAmount * p.cashoutThreshold).toFixed(1));
+            }
+          } else {
+            if (p.autoCashoutThreshold && currentMultiplier >= p.autoCashoutThreshold) {
+              p.cashedOut = true;
+              p.multiplier = p.autoCashoutThreshold;
+              p.payoutAmount = parseFloat((p.betAmount * p.autoCashoutThreshold).toFixed(2));
+
+              if (p.socketId) {
+                const wsTarget = socketMap.get(p.socketId);
+                if (wsTarget && wsTarget.readyState === 1) {
+                  wsTarget.send(JSON.stringify({
+                    type: 'AUTO_CASHOUT_SUCCESS',
+                    multiplier: p.autoCashoutThreshold,
+                    payoutAmount: p.payoutAmount,
+                    panelId: p.panelId
+                  }));
+                }
+              }
+            }
+          }
+        }
+      });
+
+      // Compute remaining online count curves
+      let remainingFraction = 1.0;
+      if (currentMultiplier <= 1.99) {
+        const scaleFraction = Math.max(0, Math.min(1, (currentMultiplier - 1.0) / 0.99));
+        remainingFraction = 1.0 - (scaleFraction * 0.12) + (Math.sin(currentMultiplier * 12) * 0.003);
+      } else {
+        const scaleFraction = Math.max(0, Math.min(1, (currentMultiplier - 1.99) / (limit - 1.99 || 1.0)));
+        const floorFrac = 0.035;
+        remainingFraction = 0.88 - Math.pow(scaleFraction, 1.6) * (0.88 - floorFrac) + (Math.sin(currentMultiplier * 4) * 0.002);
+      }
+      remainingFraction = Math.max(0.03, Math.min(1.0, remainingFraction));
+      onlinePlayersCount = Math.max(
+        finalMinPlayers,
+        Math.round(startingPlayers * remainingFraction)
+      );
+
+      broadcast({
+        type: 'MULTIPLIER_TICK',
+        multiplier: currentMultiplier,
+        elapsed,
+        activePlayers,
+        onlinePlayersCount
+      });
     }
   }, 100);
 

@@ -146,6 +146,7 @@ export default function CasinoGames({
   };
 
   // Automated sliding banner states & ticking jackpot setup
+  const [lobbyTab, setLobbyTab] = useState<'games' | 'offers' | 'affiliate'>('games');
   const [currentSlide, setCurrentSlide] = useState<number>(0);
   const [ke7Jackpot, setKe7Jackpot] = useState<number>(156183.15);
   const [selectedSportsOdds, setSelectedSportsOdds] = useState<{[key: string]: boolean}>({});
@@ -1436,7 +1437,7 @@ export default function CasinoGames({
     : LISTED_GAMES.filter(g => g.category === activeCategory);
 
   return (
-    <div id="casino-lobby" className="flex flex-col gap-6 select-none font-sans">
+    <div id="casino-lobby" className="flex flex-col gap-3 select-none font-sans h-full min-h-0 overflow-hidden">
       
       {/* ACTIVE GAME PLAYING MODULE WINDOW */}
       {selectedGame ? (
@@ -2230,9 +2231,38 @@ export default function CasinoGames({
         </div>
       ) : (
         /* STANDARD ALL CATEGORIES LOBBY GAMES LIST GRID CONTAINER */
-        <div className="flex flex-col gap-5">
+        <div className="flex flex-col gap-3 flex-1 min-h-0 overflow-hidden relative">
+          
+          {/* LOBBY NAV SWITCHER */}
+          <div className="bg-[#121318]/90 p-1 rounded-xl border border-purple-500/15 flex items-center gap-1 shrink-0 text-xs font-bold font-sans">
+            <button
+              onClick={() => setLobbyTab('games')}
+              className={`flex-1 py-1.5 px-2 rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer ${lobbyTab === 'games' ? 'bg-[#9333ea] text-white shadow-[0_0_12px_rgba(147,51,234,0.3)] font-extrabold' : 'bg-transparent text-[#9b9da4] hover:text-[#d1d2d6]'}`}
+            >
+              <span>🎰</span>
+              <span className="uppercase text-[10.5px]">Stake Games</span>
+            </button>
+            <button
+              onClick={() => setLobbyTab('offers')}
+              className={`flex-1 py-1.5 px-2 rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer ${lobbyTab === 'offers' ? 'bg-[#9333ea] text-white shadow-[0_0_12px_rgba(147,51,234,0.3)] font-extrabold' : 'bg-transparent text-[#9b9da4] hover:text-[#d1d2d6]'}`}
+            >
+              <span>🎁</span>
+              <span className="uppercase text-[10.5px]">Offers & VIP</span>
+            </button>
+            <button
+              onClick={() => setLobbyTab('affiliate')}
+              className={`flex-1 py-1.5 px-2 rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer ${lobbyTab === 'affiliate' ? 'bg-[#9333ea] text-white shadow-[0_0_12px_rgba(147,51,234,0.3)] font-extrabold' : 'bg-transparent text-[#9b9da4] hover:text-[#d1d2d6]'}`}
+            >
+              <span>🤝</span>
+              <span className="uppercase text-[10.5px]">Affiliate</span>
+            </button>
+          </div>
 
-          {/* 1. BRAND CAROUSEL SLIDESHOW ACCENT */}
+          {/* TAB CONTENT 1: GAMES */}
+          {lobbyTab === 'games' && (
+            <div className="flex-1 flex flex-col gap-3 overflow-y-auto pr-1 min-h-0 scrollbar-thin scrollbar-thumb-purple-900/30">
+
+              {/* 1. BRAND CAROUSEL SLIDESHOW ACCENT */}
           <div className="relative rounded-2xl overflow-hidden min-h-[140px] xs:min-h-[170px] sm:min-h-[210px] md:min-h-[235px] bg-gradient-to-br from-[#101115] via-[#1b1c23] to-[#0c0d11] border border-neutral-800 shadow-xl select-none">
             {/* Slides Mapping */}
             {(() => {
@@ -2340,8 +2370,14 @@ export default function CasinoGames({
               }
             `}} />
           </div>
+          </div>
+          )}
 
-          {/* 3. PHYSICAL DIGIT LIVE PROGRESSIVE JACKPOT COUNTER */}
+          {/* TAB CONTENT 2: OFFERS & VIP */}
+          {lobbyTab === 'offers' && (
+            <div className="flex-1 flex flex-col gap-3 overflow-y-auto pr-1 min-h-0 scrollbar-thin scrollbar-thumb-purple-900/30 p-1">
+
+              {/* 3. PHYSICAL DIGIT LIVE PROGRESSIVE JACKPOT COUNTER */}
           <div className="bg-gradient-to-r from-yellow-600/10 via-[#101114] to-yellow-600/10 border-2 border-yellow-500/35 rounded-2xl p-4 sm:p-5 flex flex-col md:flex-row md:items-center justify-between gap-4 select-none relative overflow-hidden shadow-md shadow-yellow-500/5">
             <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-yellow-500/5 via-transparent to-transparent pointer-events-none"></div>
             
@@ -2595,8 +2631,13 @@ export default function CasinoGames({
               )}
             </div>
           </div>
+          </div>
+          )}
 
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-purple-900/30 pb-2.5">
+          {/* TAB CONTENT 1 (SECTION 2): GAMES LISTING */}
+          {lobbyTab === 'games' && (
+            <>
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-purple-900/30 pb-2.5">
             <div className="flex items-center gap-2 select-text">
               <span className="text-base sm:text-lg font-black tracking-tight text-white uppercase italic">Casino Lobby Grounds</span>
               <span className="px-2 py-0.5 rounded bg-[#22c55e]/15 border border-green-500/30 text-[8px] text-[#22c55e] font-black uppercase tracking-widest">
@@ -2683,8 +2724,14 @@ export default function CasinoGames({
               );
             })}
           </div>
+          </>
+          )}
 
-          {/* PLAYER ACCOUNT PROFILE & REFERRER AFFILIATE DECK */}
+          {/* TAB CONTENT 3: PARTNER AFFILIATE */}
+          {lobbyTab === 'affiliate' && (
+            <div className="flex-1 flex flex-col gap-3 overflow-y-auto pr-1 min-h-0 scrollbar-thin scrollbar-thumb-purple-900/30 p-1">
+
+              {/* PLAYER ACCOUNT PROFILE & REFERRER AFFILIATE DECK */}
           <div className="mt-12 bg-gradient-to-b from-[#140b2a] via-[#0d071d] to-[#080312] border-2 border-purple-500/20 rounded-2xl p-5 sm:p-6 space-y-6 select-none relative overflow-hidden backdrop-blur-md shadow-[0_4px_30px_rgba(0,0,0,0.5)]">
             
             {/* Abs decorative gradient glow background */}
@@ -2828,6 +2875,8 @@ export default function CasinoGames({
             </div>
 
           </div>
+          </div>
+          )}
 
         </div>
       )}
